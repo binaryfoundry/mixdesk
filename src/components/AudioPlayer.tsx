@@ -7,6 +7,13 @@ import PauseIcon from '@mui/icons-material/Pause';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
 import VolumeUpIcon from '@mui/icons-material/VolumeUp';
 import { analyze } from 'web-audio-beat-detector';
+import * as mm from 'music-metadata';
+
+interface TrackMetadata {
+  title: string;
+  key: string;
+  bpm: number;
+}
 
 const AudioPlayer = () => {
   const waveformRef = useRef<HTMLDivElement>(null);
@@ -18,6 +25,7 @@ const AudioPlayer = () => {
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [beats, setBeats] = useState<number[]>([]);
   const [gridColor, setGridColor] = useState('#ff0000');
+  const [metadata, setMetadata] = useState<TrackMetadata | null>(null);
 
   useEffect(() => {
     if (waveformRef.current) {
@@ -91,11 +99,50 @@ const AudioPlayer = () => {
     }
   };
 
+  const readMetadata = async (file: File) => {
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const buffer = new Uint8Array(arrayBuffer);
+      const metadata = await mm.parseBuffer(buffer, file.type);
+      
+      const title = metadata.common.title || file.name;
+      const key = metadata.common.key || 'Unknown';
+      
+      // Log all available metadata for debugging
+      console.log('Full metadata:', metadata);
+      
+      // Try to get BPM from common tags
+      let bpm = 0;
+      if (metadata.common.bpm) {
+        bpm = metadata.common.bpm;
+      }
+      
+      console.log('Extracted BPM:', bpm);
+      
+      setMetadata({
+        title,
+        key,
+        bpm
+      });
+    } catch (error) {
+      console.error('Error reading metadata:', error);
+      setMetadata({
+        title: file.name,
+        key: 'Unknown',
+        bpm: 0
+      });
+    }
+  };
+
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file && wavesurferRef.current) {
       console.log('Loading audio file:', file.name);
       setAudioFile(file);
+      
+      // Read metadata first
+      await readMetadata(file);
+      
       const audioUrl = URL.createObjectURL(file);
       
       // Listen for ready event before loading
@@ -218,9 +265,16 @@ const AudioPlayer = () => {
             />
           </Button>
           {audioFile && (
-            <Typography variant="body2" color="text.secondary">
-              {audioFile.name}
-            </Typography>
+            <Box sx={{ display: 'flex', flexDirection: 'column' }}>
+              <Typography variant="body2" color="text.secondary">
+                {metadata?.title || audioFile.name}
+              </Typography>
+              {metadata && (
+                <Typography variant="caption" color="text.secondary">
+                  Key: {metadata.key} | BPM: {metadata.bpm}
+                </Typography>
+              )}
+            </Box>
           )}
         </Box>
 
