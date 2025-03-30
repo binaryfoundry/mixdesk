@@ -66,10 +66,14 @@ const AudioPlayer = () => {
     }
   }, []);
 
-  const detectBeats = async (audioBuffer: AudioBuffer) => {
+  const detectBeats = async (audioBuffer: AudioBuffer, metadataBpm: number) => {
     try {
-      const bpm = await analyze(audioBuffer);
-      console.log('Detected BPM:', bpm); // Debug log
+      // Set min/max tempo based on metadata BPM
+      const minTempo = Math.max(60, metadataBpm * 0.95);
+      const maxTempo = Math.min(200, metadataBpm * 1.05);
+
+      const bpm = await analyze(audioBuffer, { maxTempo, minTempo });
+      console.log('Detected BPM:' + bpm + '  Metadata BPM:' + metadataBpm);
 
       // Generate beat times based on BPM
       const beatInterval = 60 / bpm; // Time between beats in seconds
@@ -82,9 +86,8 @@ const AudioPlayer = () => {
 
       setBeats(beatTimes);
       
-      // Calculate tempo difference from base tempo
-      const baseTempo = 120; // Assuming 120 BPM as base
-      const tempoDiff = ((bpm - baseTempo) / baseTempo) * 100;
+      // Calculate tempo difference from metadata BPM
+      const tempoDiff = ((bpm - metadataBpm) / metadataBpm) * 100;
       setTempo(Math.round(tempoDiff * 10) / 10);
       
       // Set grid color based on BPM stability
@@ -99,7 +102,7 @@ const AudioPlayer = () => {
     }
   };
 
-  const readMetadata = async (file: File) => {
+  const readMetadata = async (file: File): Promise<TrackMetadata> => {
     try {
       const arrayBuffer = await file.arrayBuffer();
       const buffer = new Uint8Array(arrayBuffer);
@@ -119,18 +122,18 @@ const AudioPlayer = () => {
       
       console.log('Extracted BPM:', bpm);
       
-      setMetadata({
+      return {
         title,
         key,
         bpm
-      });
+      };
     } catch (error) {
       console.error('Error reading metadata:', error);
-      setMetadata({
+      return {
         title: file.name,
         key: 'Unknown',
         bpm: 0
-      });
+      };
     }
   };
 
@@ -141,7 +144,8 @@ const AudioPlayer = () => {
       setAudioFile(file);
       
       // Read metadata first
-      await readMetadata(file);
+      const trackMetadata = await readMetadata(file);
+      setMetadata(trackMetadata);
       
       const audioUrl = URL.createObjectURL(file);
       
@@ -152,7 +156,7 @@ const AudioPlayer = () => {
         const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
         file.arrayBuffer().then(arrayBuffer => {
           audioContext.decodeAudioData(arrayBuffer).then(audioBuffer => {
-            detectBeats(audioBuffer);
+            detectBeats(audioBuffer, trackMetadata.bpm || 120); // Use metadata BPM or default to 120
           });
         });
       });
