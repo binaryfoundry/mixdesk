@@ -75,30 +75,95 @@ const AudioPlayer = () => {
       const bpm = await analyze(audioBuffer, { maxTempo, minTempo });
       console.log('Detected BPM:' + bpm + '  Metadata BPM:' + metadataBpm);
 
-      // Generate beat times based on BPM
-      const beatInterval = 60 / bpm; // Time between beats in seconds
+      // Create an AudioContext for analysis
+      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      
+      // Create an analyzer node
+      const analyzer = audioContext.createAnalyser();
+      analyzer.fftSize = 2048;
+      
+      // Create a source node from the audio buffer
+      const source = audioContext.createBufferSource();
+      source.buffer = audioBuffer;
+      
+      // Connect nodes
+      source.connect(analyzer);
+      analyzer.connect(audioContext.destination);
+      
+      // Calculate the expected beat interval in samples
+      const beatIntervalSamples = audioBuffer.sampleRate * (60 / bpm);
+      
+      // Create arrays for analysis
+      const bufferLength = analyzer.frequencyBinCount;
+      const timeData = new Float32Array(bufferLength);
+      const freqData = new Float32Array(bufferLength);
+      
+      // Analyze the first few seconds to find the first beat
+      const analysisDuration = 5; // seconds
+      const analysisSamples = Math.min(analysisDuration * audioBuffer.sampleRate, audioBuffer.length);
+      const sampleStep = Math.floor(analysisSamples / 200); // Analyze 200 points
+      
+      let maxEnergy = 0;
+      let firstBeatSample = 0;
+      
+      // Get the audio data from the first channel
+      const channelData = audioBuffer.getChannelData(0);
+      
+      // Analyze samples in chunks
+      for (let sample = 0; sample < analysisSamples; sample += sampleStep) {
+        // Get time domain data
+        analyzer.getFloatTimeDomainData(timeData);
+        
+        // Get frequency domain data
+        analyzer.getFloatFrequencyData(freqData);
+        
+        // Calculate energy in the current chunk
+        let energy = 0;
+        const chunkSize = Math.min(sampleStep, analysisSamples - sample);
+        
+        // Calculate time domain energy
+        for (let i = 0; i < chunkSize; i++) {
+          const value = channelData[sample + i];
+          energy += value * value;
+        }
+        
+        // Add frequency domain energy (focusing on bass frequencies)
+        let bassEnergy = 0;
+        for (let i = 0; i < 20; i++) { // First 20 frequency bins (roughly 0-500Hz)
+          bassEnergy += Math.pow(10, freqData[i] / 10);
+        }
+        
+        // Combine time and frequency domain energy
+        const totalEnergy = energy + (bassEnergy * 0.5);
+        
+        // If this is a potential beat (based on expected interval)
+        if (sample % Math.floor(beatIntervalSamples) < sampleStep) {
+          if (totalEnergy > maxEnergy) {
+            maxEnergy = totalEnergy;
+            firstBeatSample = sample;
+          }
+        }
+      }
+      
+      // Convert sample position to time
+      const startTime = firstBeatSample / audioBuffer.sampleRate;
+      console.log('First beat detected at:', startTime, 'seconds with energy:', maxEnergy);
+
+      // Generate beat times based on metadata BPM
+      const beatIntervalSeconds = 60 / metadataBpm; // Time between beats in seconds
       const duration = audioBuffer.duration;
       const beatTimes: number[] = [];
       
-      for (let time = 0; time < duration; time += beatInterval) {
+      // Generate beat times starting from the first beat
+      for (let time = startTime; time < duration; time += beatIntervalSeconds) {
         beatTimes.push(time);
       }
 
       setBeats(beatTimes);
-      
-      // Calculate tempo difference from metadata BPM
-      const tempoDiff = ((bpm - metadataBpm) / metadataBpm) * 100;
-      setTempo(Math.round(tempoDiff * 10) / 10);
-      
-      // Set grid color based on BPM stability
-      const confidence = 0.8; // Since we're generating beats based on BPM
-      setGridColor(confidence > 0.8 ? '#00ff00' : confidence > 0.6 ? '#ffff00' : '#ff0000');
     } catch (error) {
       console.error('Error detecting beats:', error);
       // Set default values on error
       setBeats([]);
-      setTempo(0);
-      setGridColor('#ff0000');
     }
   };
 
