@@ -14,6 +14,7 @@
     "@emotion/styled": "^11.14.0",
     "@mui/icons-material": "^7.0.1",
     "@mui/material": "^7.0.1",
+    "aubiojs": "^0.2.1",
     "music-metadata": "^11.0.2",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

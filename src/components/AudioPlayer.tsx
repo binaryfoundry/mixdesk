@@ -8,6 +8,7 @@ import UploadFileIcon from '@mui/icons-material/UploadFile';
 import VolumeUpIcon from '@mui/icons-material/VolumeUp';
 import { analyze } from 'web-audio-beat-detector';
 import * as mm from 'music-metadata';
+import aubio from 'aubiojs';
 
 interface TrackMetadata {
   title: string;
@@ -26,6 +27,7 @@ const AudioPlayer = () => {
   const [beats, setBeats] = useState<number[]>([]);
   const [gridColor, setGridColor] = useState('#ff0000');
   const [metadata, setMetadata] = useState<TrackMetadata | null>(null);
+  const [phrases, setPhrases] = useState<{ startTime: number, endTime: number }[]>([]);
 
   useEffect(() => {
     if (waveformRef.current) {
@@ -66,106 +68,82 @@ const AudioPlayer = () => {
     }
   }, []);
 
-  const detectBeats = async (audioBuffer: AudioBuffer, metadataBpm: number) => {
-    try {
-      // Set min/max tempo based on metadata BPM
-      const minTempo = Math.max(60, metadataBpm * 0.95);
-      const maxTempo = Math.min(200, metadataBpm * 1.05);
-
-      const bpm = await analyze(audioBuffer, { maxTempo, minTempo });
-      console.log('Detected BPM:' + bpm + '  Metadata BPM:' + metadataBpm);
-
-      // Create an AudioContext for analysis
-      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-      
-      // Create an analyzer node
-      const analyzer = audioContext.createAnalyser();
-      analyzer.fftSize = 2048;
-      
-      // Create a source node from the audio buffer
-      const source = audioContext.createBufferSource();
-      source.buffer = audioBuffer;
-      
-      // Connect nodes
-      source.connect(analyzer);
-      analyzer.connect(audioContext.destination);
-      
-      // Calculate the expected beat interval in samples
-      const beatIntervalSamples = audioBuffer.sampleRate * (60 / bpm);
-      
-      // Create arrays for analysis
-      const bufferLength = analyzer.frequencyBinCount;
-      const timeData = new Float32Array(bufferLength);
-      const freqData = new Float32Array(bufferLength);
-      
-      // Analyze the first few seconds to find the first beat
-      const analysisDuration = 5; // seconds
-      const analysisSamples = Math.min(analysisDuration * audioBuffer.sampleRate, audioBuffer.length);
-      const sampleStep = Math.floor(analysisSamples / 200); // Analyze 200 points
-      
-      let maxEnergy = 0;
-      let firstBeatSample = 0;
-      
-      // Get the audio data from the first channel
-      const channelData = audioBuffer.getChannelData(0);
-      
-      // Analyze samples in chunks
-      for (let sample = 0; sample < analysisSamples; sample += sampleStep) {
-        // Get time domain data
-        analyzer.getFloatTimeDomainData(timeData);
-        
-        // Get frequency domain data
-        analyzer.getFloatFrequencyData(freqData);
-        
-        // Calculate energy in the current chunk
-        let energy = 0;
-        const chunkSize = Math.min(sampleStep, analysisSamples - sample);
-        
-        // Calculate time domain energy
-        for (let i = 0; i < chunkSize; i++) {
-          const value = channelData[sample + i];
-          energy += value * value;
-        }
-        
-        // Add frequency domain energy (focusing on bass frequencies)
-        let bassEnergy = 0;
-        for (let i = 0; i < 20; i++) { // First 20 frequency bins (roughly 0-500Hz)
-          bassEnergy += Math.pow(10, freqData[i] / 10);
-        }
-        
-        // Combine time and frequency domain energy
-        const totalEnergy = energy + (bassEnergy * 0.5);
-        
-        // If this is a potential beat (based on expected interval)
-        if (sample % Math.floor(beatIntervalSamples) < sampleStep) {
-          if (totalEnergy > maxEnergy) {
-            maxEnergy = totalEnergy;
-            firstBeatSample = sample;
-          }
-        }
+  async function detectBeats(buffer: AudioBuffer, metadataBpm: number): Promise<{
+    beatTimes: number[], 
+    phrases: { startTime: number, endTime: number }[]
+  }> {
+    const sampleRate = buffer.sampleRate;
+    const numSamples = buffer.length;
+    
+    // 1. Offline context for filtering (mono, full length)
+    const offlineCtx = new OfflineAudioContext(1, numSamples, sampleRate);
+    const source = offlineCtx.createBufferSource();
+    source.buffer = buffer;
+    // Create filters to isolate kick drum frequencies
+    const highpass = offlineCtx.createBiquadFilter();
+    highpass.type = 'highpass';
+    highpass.frequency.value = 40;            // cut rumble below 40 Hz
+    const lowpass = offlineCtx.createBiquadFilter();
+    lowpass.type = 'lowpass';
+    lowpass.frequency.value = 150;           // cut above 150 Hz to focus on bass
+    // Connect nodes: source -> highpass -> lowpass -> destination
+    source.connect(highpass);
+    highpass.connect(lowpass);
+    lowpass.connect(offlineCtx.destination);
+    source.start(0);
+    // Render offline audio
+    const renderedBuffer = await offlineCtx.startRendering();
+    const data = renderedBuffer.getChannelData(0);  // get mono PCM data
+    
+    // 2. Use aubio.js for beat (tempo) detection
+    const { Tempo } = await aubio();  
+    const tempo = new Tempo(1024, 512, sampleRate);
+    let beatTimes: number[] = [];
+    let totalFrames = 0;
+    
+    // Create a buffer for processing
+    const hopSize = 512;
+    const bufferSize = 1024;
+    const processBuffer = new Float32Array(bufferSize);
+    
+    // Process in hops of 512 samples
+    for (let i = 0; i < data.length - bufferSize; i += hopSize) {
+      // Copy data into process buffer
+      for (let j = 0; j < bufferSize; j++) {
+        processBuffer[j] = data[i + j];
       }
       
-      // Convert sample position to time
-      const startTime = firstBeatSample / audioBuffer.sampleRate;
-      console.log('First beat detected at:', startTime, 'seconds with energy:', maxEnergy);
-
-      // Generate beat times based on metadata BPM
-      const beatIntervalSeconds = 60 / metadataBpm; // Time between beats in seconds
-      const duration = audioBuffer.duration;
-      const beatTimes: number[] = [];
-      
-      // Generate beat times starting from the first beat
-      for (let time = startTime; time < duration; time += beatIntervalSeconds) {
-        beatTimes.push(time);
+      // Process this frame
+      const result = tempo.do(processBuffer);
+      if (result !== 0) {
+        // Beat detected at end of this frame
+        const beatTimeMs = (totalFrames / sampleRate) * 1000;
+        beatTimes.push(Math.round(beatTimeMs));     // record beat timestamp in ms
       }
-
-      setBeats(beatTimes);
-    } catch (error) {
-      console.error('Error detecting beats:', error);
-      // Set default values on error
-      setBeats([]);
+      totalFrames += hopSize;
     }
-  };
+    
+    const bpm = tempo.getBpm();
+    console.log('Detected BPM:', bpm);
+    
+    // (Optional) adjust BPM to standard range and refine beat times
+    let adjustedBpm = bpm;
+    if (adjustedBpm < 90) adjustedBpm *= 2;
+    if (adjustedBpm > 180) adjustedBpm /= 2;
+    
+    // 3. Group beats into 32-beat phrases
+    const phrases: {startTime: number, endTime: number}[] = [];
+    for (let i = 0; i < beatTimes.length; i += 32) {
+      const startTime = beatTimes[i];
+      // If fewer than 32 beats remain, use last beat as endTime
+      const endIndex = (i + 31 < beatTimes.length) ? i + 31 : beatTimes.length - 1;
+      const endTime = beatTimes[endIndex];
+      phrases.push({ startTime, endTime });
+    }
+    
+    return { beatTimes, phrases };
+  }
+  
 
   const readMetadata = async (file: File): Promise<TrackMetadata> => {
     try {
@@ -221,7 +199,10 @@ const AudioPlayer = () => {
         const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
         file.arrayBuffer().then(arrayBuffer => {
           audioContext.decodeAudioData(arrayBuffer).then(audioBuffer => {
-            detectBeats(audioBuffer, trackMetadata.bpm || 120); // Use metadata BPM or default to 120
+            detectBeats(audioBuffer, trackMetadata.bpm || 120).then(({ beatTimes, phrases }) => {
+              setBeats(beatTimes);
+              setPhrases(phrases);
+            });
           });
         });
       });
@@ -275,27 +256,24 @@ const AudioPlayer = () => {
       regionsPlugin.clearRegions();
       let regionIndex = 0;
 
-      // Add new regions for every 32nd beat
-      beats.forEach((time, index) => {
-        if (index % 32 === 0) {  // Only show every 32nd beat
-          const nextBeat = beats[index + 32] || wavesurferRef.current?.getDuration() || time + 1;
-          regionsPlugin.addRegion({
-            start: time,
-            end: nextBeat, // Region extends to the next 32nd beat
-            color: regionIndex % 2 === 0 ? 'rgba(0, 0, 255, 0.1)' : 'rgba(0, 0, 255, 0.2)', // Transparent colors
-            drag: false,
-            resize: false,
-            channelIdx: -1, // -1 means cover all channels
-            minWidth: 0,
-            maxWidth: 0,
-            minHeight: 0,
-            maxHeight: 0
-          });
-          regionIndex++;
-        }
+      // Add regions for each phrase
+      phrases.forEach((phrase, index) => {
+        regionsPlugin.addRegion({
+          start: phrase.startTime / 1000, // Convert ms to seconds
+          end: phrase.endTime / 1000,     // Convert ms to seconds
+          color: index % 2 === 0 ? 'rgba(0, 0, 255, 0.1)' : 'rgba(0, 0, 255, 0.2)', // Transparent colors
+          drag: false,
+          resize: false,
+          channelIdx: -1, // -1 means cover all channels
+          minWidth: 0,
+          maxWidth: 0,
+          minHeight: 0,
+          maxHeight: 0
+        });
+        regionIndex++;
       });
     }
-  }, [beats, gridColor]);
+  }, [beats, phrases, gridColor]);
 
   return (
     <Paper elevation={3} sx={{ 
