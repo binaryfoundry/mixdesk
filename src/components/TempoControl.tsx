@@ -18,7 +18,7 @@ export function TempoControl({ tempo, onChange }: TempoControlProps) {
       mb: 2
     }}>
       <Typography variant="body1" sx={{ minWidth: '100px' }}>
-        Global Tempo: {tempo}%
+        Global Tempo: {tempo}
       </Typography>
       <Slider
         value={tempo}
