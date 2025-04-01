@@ -5,12 +5,13 @@ declare module 'signalsmith-stretch' {
     rate: number;
   }
 
-  interface StretchNode extends AudioWorkletNode {
+  interface StretchNode extends AudioNode {
     inputTime: number;
     setState(options: { sample: { speed: number } }): void;
     setUpdateInterval(seconds: number, callback?: (time: number) => void): void;
     setTimeMap(segments: TimeMapSegment[]): void;
     schedule(options: { rate: number }): void;
+    start(): void;
   }
 
   function SignalsmithStretch(audioContext: AudioContext, options?: AudioWorkletNodeOptions): Promise<StretchNode>;
