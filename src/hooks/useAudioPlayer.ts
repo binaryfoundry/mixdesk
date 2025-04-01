@@ -145,7 +145,7 @@ export function useAudioPlayer() {
             newTrack.gainNode.gain.value = newTrack.volume;
           }
 
-          detectBeats(audioBuffer, trackMetadata.bpm || 120).then(({ beatTimes, phrases, bpm }) => {
+          detectBeats(audioBuffer).then(({ beatTimes, phrases, bpm }) => {
             updateTrack(newTrack.id, {
               bpm,
               beats: beatTimes,
@@ -240,7 +240,7 @@ export function useAudioPlayer() {
     });
   };
 
-  async function detectBeats(buffer: AudioBuffer, metadataBpm: number): Promise<{
+  async function detectBeats(buffer: AudioBuffer): Promise<{
     beatTimes: number[], 
     phrases: { startTime: number, endTime: number }[],
     bpm: number

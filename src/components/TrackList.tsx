@@ -13,6 +13,7 @@ interface Track {
   };
   isPlaying: boolean;
   volume: number;
+  bpm: number;
 }
 
 interface TrackListProps {
@@ -40,7 +41,7 @@ export function TrackList({ tracks, onPlayPause, onVolumeChange }: TrackListProp
               {track.metadata.title || track.file.name}
             </Typography>
             <Typography variant="caption" color="text.secondary">
-              Key: {track.metadata.key} | BPM: {track.metadata.bpm}
+              Key: {track.metadata.key} | BPM: {Math.round(track.bpm)}
             </Typography>
           </Box>
 
