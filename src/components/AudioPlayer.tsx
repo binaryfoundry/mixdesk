@@ -1,6 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
-import WaveSurfer from 'wavesurfer.js';
-import RegionsPlugin from 'wavesurfer.js/dist/plugins/regions.js';
+import { useEffect, useRef, useState } from 'react';
 import { Box, Button, Slider, Typography, Paper } from '@mui/material';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import PauseIcon from '@mui/icons-material/Pause';
@@ -8,6 +6,7 @@ import UploadFileIcon from '@mui/icons-material/UploadFile';
 import VolumeUpIcon from '@mui/icons-material/VolumeUp';
 import * as mm from 'music-metadata';
 import aubio from 'aubiojs';
+import SignalsmithStretch from 'signalsmith-stretch';
 
 interface TrackMetadata {
   title: string;
@@ -15,57 +14,204 @@ interface TrackMetadata {
   bpm: number;
 }
 
-const AudioPlayer = () => {
-  const waveformRef = useRef<HTMLDivElement>(null);
-  const wavesurferRef = useRef<WaveSurfer | null>(null);
-  const tempoTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+export default function AudioPlayer() {
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const sourceNodeRef = useRef<AudioBufferSourceNode | null>(null);
+  const gainNodeRef = useRef<GainNode | null>(null);
+  const stretchNodeRef = useRef<any>(null);
+  const timeUpdateIntervalRef = useRef<number | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [tempo, setTempo] = useState(0);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(1);
+  const [tempo, setTempo] = useState(120); // 100% = normal speed
   const [audioFile, setAudioFile] = useState<File | null>(null);
-  const [beats, setBeats] = useState<number[]>([]);
-  const [gridColor, setGridColor] = useState('#ff0000');
   const [metadata, setMetadata] = useState<TrackMetadata | null>(null);
+  const [beats, setBeats] = useState<number[]>([]);
   const [phrases, setPhrases] = useState<{ startTime: number, endTime: number }[]>([]);
 
+  // Update current time while playing
   useEffect(() => {
-    if (waveformRef.current) {
-      const wavesurfer = WaveSurfer.create({
-        container: waveformRef.current,
-        waveColor: '#4a9eff',
-        progressColor: '#2c5282',
-        cursorColor: '#2c5282',
-        barWidth: 2,
-        barRadius: 3,
-        cursorWidth: 1,
-        height: 100,
-        barGap: 1,
-        normalize: true,
-        fillParent: true,
-        minPxPerSec: 1,
-        interact: true,
-        hideScrollbar: true,
-        autoCenter: true,
-        autoScroll: false,
-        backend: 'MediaElement',
-        mediaControls: false,
-        plugins: [RegionsPlugin.create()]
-      });
-
-      wavesurferRef.current = wavesurfer;
-
-      wavesurfer.on('finish', () => {
-        setIsPlaying(false);
-      });
-
-      return () => {
-        if (tempoTimeoutRef.current) {
-          clearTimeout(tempoTimeoutRef.current);
+    if (isPlaying && sourceNodeRef.current) {
+      const startTime = audioContextRef.current?.currentTime || 0;
+      const startOffset = currentTime;
+      
+      timeUpdateIntervalRef.current = window.setInterval(() => {
+        const elapsed = (audioContextRef.current?.currentTime || 0) - startTime;
+        const newTime = startOffset + elapsed;
+        
+        // Ensure the new time is a valid number and within bounds
+        if (isFinite(newTime) && newTime >= 0 && newTime <= duration) {
+          setCurrentTime(newTime);
         }
-        wavesurfer.destroy();
+      }, 100);
+    } else if (timeUpdateIntervalRef.current) {
+      window.clearInterval(timeUpdateIntervalRef.current);
+    }
+  }, [isPlaying, currentTime, duration]);
+
+  const initAudio = async () => {
+    try {
+      audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+      
+      // Create gain node
+      gainNodeRef.current = audioContextRef.current.createGain();
+      gainNodeRef.current.connect(audioContextRef.current.destination);
+
+      return true;
+    } catch (error) {
+      console.error('Error initializing audio:', error);
+      return false;
+    }
+  };
+
+  const readMetadata = async (file: File): Promise<TrackMetadata> => {
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const buffer = new Uint8Array(arrayBuffer);
+      const metadata = await mm.parseBuffer(buffer, file.type);
+      
+      const title = metadata.common.title || file.name;
+      const key = metadata.common.key || 'Unknown';
+      const bpm = metadata.common.bpm || 0;
+      
+      return {
+        title,
+        key,
+        bpm
+      };
+    } catch (error) {
+      console.error('Error reading metadata:', error);
+      return {
+        title: file.name,
+        key: 'Unknown',
+        bpm: 0
       };
     }
-  }, []);
+  };
+
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      console.log('Loading audio file:', file.name);
+      setAudioFile(file);
+      
+      // Initialize audio context first
+      const audioInitialized = await initAudio();
+      if (!audioInitialized) {
+        console.error('Failed to initialize audio context');
+        return;
+      }
+      
+      // Read metadata first
+      const trackMetadata = await readMetadata(file);
+      setMetadata(trackMetadata);
+      
+      // Load audio into Web Audio API
+      const arrayBuffer = await file.arrayBuffer();
+      const audioBuffer = await audioContextRef.current?.decodeAudioData(arrayBuffer);
+      if (audioBuffer && audioContextRef.current && gainNodeRef.current) {
+        setDuration(audioBuffer.duration);
+        
+        // Create initial source node
+        const sourceNode = audioContextRef.current.createBufferSource();
+        if (sourceNode) {
+          sourceNodeRef.current = sourceNode;
+          sourceNode.buffer = audioBuffer;
+          
+          // Connect nodes: source -> gain -> destination
+          sourceNode.connect(gainNodeRef.current);
+          
+          // Set initial volume
+          gainNodeRef.current.gain.value = volume;
+        }
+
+        // Detect beats
+        detectBeats(audioBuffer, trackMetadata.bpm || 120).then(({ beatTimes, phrases }) => {
+          setBeats(beatTimes);
+          setPhrases(phrases);
+        });
+      }
+    }
+  };
+
+  const handlePlayPause = async () => {
+    if (audioFile && audioContextRef.current && gainNodeRef.current) {
+      try {
+        // Resume audio context if it's suspended
+        if (audioContextRef.current.state === 'suspended') {
+          await audioContextRef.current.resume();
+        }
+
+        if (isPlaying) {
+          sourceNodeRef.current?.stop();
+          if (timeUpdateIntervalRef.current) {
+            window.clearInterval(timeUpdateIntervalRef.current);
+          }
+        } else {
+          // Ensure currentTime is valid before starting playback
+          const validCurrentTime = isFinite(currentTime) ? currentTime : 0;
+          
+          // Create and start a new source node
+          const arrayBuffer = await audioFile.arrayBuffer();
+          const audioBuffer = await audioContextRef.current.decodeAudioData(arrayBuffer);
+          const sourceNode = audioContextRef.current.createBufferSource();
+          
+          if (sourceNode) {
+            sourceNodeRef.current = sourceNode;
+            sourceNode.buffer = audioBuffer;
+            
+            // Create and configure stretch node
+            const stretchNode = await SignalsmithStretch(audioContextRef.current);
+            stretchNodeRef.current = stretchNode;
+            
+            // Connect nodes: source -> stretch -> gain -> destination
+            sourceNode.connect(stretchNode);
+            stretchNode.connect(gainNodeRef.current);
+            gainNodeRef.current.connect(audioContextRef.current.destination);
+            
+            // Set initial volume
+            gainNodeRef.current.gain.value = volume;
+            
+            // Start playback
+            stretchNode.start();
+            sourceNode.start(0, validCurrentTime);
+            
+            // Debug logging
+            console.log('Audio playback started:', {
+              contextState: audioContextRef.current.state,
+              volume: gainNodeRef.current.gain.value,
+              currentTime: validCurrentTime
+            });
+          }
+        }
+        setIsPlaying(!isPlaying);
+      } catch (error) {
+        console.error('Error in handlePlayPause:', error);
+      }
+    }
+  };
+
+  const handleVolumeChange = (event: Event, newValue: number | number[]) => {
+    const newVolume = newValue as number;
+    setVolume(newVolume);
+    if (gainNodeRef.current) {
+      gainNodeRef.current.gain.value = newVolume;
+    }
+  };
+
+  const handleTempoChange = (event: Event, newValue: number | number[]) => {
+    const newTempo = newValue as number;
+    setTempo(newTempo);
+    
+    // Convert percentage to rate (e.g., 100% = 1.0, 150% = 1.5, 50% = 0.5)
+    const rate = newTempo / 100;
+    
+    // Update the stretch node's rate
+    if (stretchNodeRef.current) {
+      stretchNodeRef.current.schedule({ rate, semitones: -2 });
+    }
+  };
 
   async function detectBeats(buffer: AudioBuffer, metadataBpm: number): Promise<{
     beatTimes: number[], 
@@ -139,140 +285,9 @@ const AudioPlayer = () => {
       const endTime = beatTimes[endIndex];
       phrases.push({ startTime, endTime });
     }
-    
+
     return { beatTimes, phrases };
   }
-  
-
-  const readMetadata = async (file: File): Promise<TrackMetadata> => {
-    try {
-      const arrayBuffer = await file.arrayBuffer();
-      const buffer = new Uint8Array(arrayBuffer);
-      const metadata = await mm.parseBuffer(buffer, file.type);
-      
-      const title = metadata.common.title || file.name;
-      const key = metadata.common.key || 'Unknown';
-      
-      // Log all available metadata for debugging
-      console.log('Full metadata:', metadata);
-      
-      // Try to get BPM from common tags
-      let bpm = 0;
-      if (metadata.common.bpm) {
-        bpm = metadata.common.bpm;
-      }
-      
-      console.log('Extracted BPM:', bpm);
-      
-      return {
-        title,
-        key,
-        bpm
-      };
-    } catch (error) {
-      console.error('Error reading metadata:', error);
-      return {
-        title: file.name,
-        key: 'Unknown',
-        bpm: 0
-      };
-    }
-  };
-
-  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file && wavesurferRef.current) {
-      console.log('Loading audio file:', file.name);
-      setAudioFile(file);
-      
-      // Read metadata first
-      const trackMetadata = await readMetadata(file);
-      setMetadata(trackMetadata);
-      
-      const audioUrl = URL.createObjectURL(file);
-      
-      // Listen for ready event before loading
-      wavesurferRef.current.on('ready', () => {
-        console.log('WaveSurfer is ready after loading audio');
-        // Create an AudioContext to analyze the file
-        const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-        file.arrayBuffer().then(arrayBuffer => {
-          audioContext.decodeAudioData(arrayBuffer).then(audioBuffer => {
-            detectBeats(audioBuffer, trackMetadata.bpm || 120).then(({ beatTimes, phrases }) => {
-              setBeats(beatTimes);
-              setPhrases(phrases);
-            });
-          });
-        });
-      });
-
-      wavesurferRef.current.load(audioUrl);
-    }
-  };
-
-  const handlePlayPause = () => {
-    if (wavesurferRef.current) {
-      wavesurferRef.current.playPause();
-      setIsPlaying(!isPlaying);
-    }
-  };
-
-  const updateTempo = useCallback((newTempo: number) => {
-    if (wavesurferRef.current) {
-      const playbackRate = 1 + (newTempo / 100);
-      wavesurferRef.current.setPlaybackRate(playbackRate, true);
-    }
-  }, []);
-
-  const handleTempoChange = (event: Event, newValue: number | number[]) => {
-    const newTempo = newValue as number;
-    setTempo(newTempo);
-
-    if (tempoTimeoutRef.current) {
-      clearTimeout(tempoTimeoutRef.current);
-    }
-
-    tempoTimeoutRef.current = setTimeout(() => {
-      updateTempo(newTempo);
-    }, 50);
-  };
-
-  const handleVolumeChange = (event: Event, newValue: number | number[]) => {
-    const newVolume = newValue as number;
-    setVolume(newVolume);
-    if (wavesurferRef.current) {
-      wavesurferRef.current.setVolume(newVolume);
-    }
-  };
-
-  // Update beat regions
-  useEffect(() => {
-    if (wavesurferRef.current && beats.length > 0) {
-      console.log('Updating beat regions with', beats.length, 'beats');
-      const regionsPlugin = wavesurferRef.current.getActivePlugins()[0];
-
-      // Clear existing regions
-      regionsPlugin.clearRegions();
-      let regionIndex = 0;
-
-      // Add regions for each phrase
-      phrases.forEach((phrase, index) => {
-        regionsPlugin.addRegion({
-          start: phrase.startTime / 1000, // Convert ms to seconds
-          end: phrase.endTime / 1000,     // Convert ms to seconds
-          color: index % 2 === 0 ? 'rgba(0, 0, 255, 0.1)' : 'rgba(0, 0, 255, 0.2)', // Transparent colors
-          drag: false,
-          resize: false,
-          channelIdx: -1, // -1 means cover all channels
-          minWidth: 0,
-          maxWidth: 0,
-          minHeight: 0,
-          maxHeight: 0
-        });
-        regionIndex++;
-      });
-    }
-  }, [beats, phrases, gridColor]);
 
   return (
     <Paper elevation={3} sx={{ 
@@ -324,13 +339,6 @@ const AudioPlayer = () => {
           )}
         </Box>
 
-        <Box ref={waveformRef} sx={{ 
-          width: '100%', 
-          flex: 1,
-          minHeight: '200px',
-          position: 'relative'
-        }} />
-
         <Box sx={{ 
           display: 'flex', 
           alignItems: 'center', 
@@ -352,13 +360,13 @@ const AudioPlayer = () => {
           </Button>
 
           <Box sx={{ flex: 1, minWidth: '200px' }}>
-            <Typography gutterBottom>Tempo: {tempo > 0 ? '+' : ''}{tempo}%</Typography>
+            <Typography gutterBottom>Tempo: {tempo}</Typography>
             <Slider
               value={tempo}
               onChange={handleTempoChange}
-              min={-10}
-              max={10}
-              step={0.1}
+              min={90}
+              max={150}
+              step={1}
               disabled={!audioFile}
             />
           </Box>
@@ -385,6 +393,4 @@ const AudioPlayer = () => {
       </Box>
     </Paper>
   );
-};
-
-export default AudioPlayer; 
+} 
