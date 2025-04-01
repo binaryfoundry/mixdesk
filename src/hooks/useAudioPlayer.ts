@@ -145,7 +145,7 @@ export function useAudioPlayer() {
             newTrack.gainNode.gain.value = newTrack.volume;
           }
 
-          detectBeats(audioBuffer).then(({ beatTimes, phrases, bpm }) => {
+          detectBeats(audioBuffer, trackMetadata.bpm).then(({ beatTimes, phrases, bpm }) => {
             updateTrack(newTrack.id, {
               bpm,
               beats: beatTimes,
@@ -248,40 +248,59 @@ export function useAudioPlayer() {
     const sampleRate = buffer.sampleRate;
     const numSamples = buffer.length;
     
+    // Create offline context for analysis
     const offlineCtx = new OfflineAudioContext(1, numSamples, sampleRate);
     const source = offlineCtx.createBufferSource();
     source.buffer = buffer;
-    
+
+    // Create a more sophisticated filter chain for breakbeat detection
     const highpass = offlineCtx.createBiquadFilter();
     highpass.type = 'highpass';
-    highpass.frequency.value = 40;
-    
+    highpass.frequency.value = 30;  // Lower cutoff to catch more bass frequencies
+    highpass.Q.value = 0.7;
+
     const lowpass = offlineCtx.createBiquadFilter();
     lowpass.type = 'lowpass';
-    lowpass.frequency.value = 150;
-    
+    lowpass.frequency.value = 200;  // Higher cutoff to include more mid frequencies
+    lowpass.Q.value = 0.7;
+
+    // Add a peak filter for snare detection
+    const peak = offlineCtx.createBiquadFilter();
+    peak.type = 'peaking';
+    peak.frequency.value = 150;  // Center frequency for snare
+    peak.gain.value = 10;
+    peak.Q.value = 2;
+
+    // Connect the filter chain
     source.connect(highpass);
     highpass.connect(lowpass);
-    lowpass.connect(offlineCtx.destination);
+    lowpass.connect(peak);
+    peak.connect(offlineCtx.destination);
     source.start(0);
-    
+
+    // Render the filtered audio
     const renderedBuffer = await offlineCtx.startRendering();
     const data = renderedBuffer.getChannelData(0);
-    
-    const { Tempo } = await aubio();  
-    const tempo = new Tempo(1024, 512, sampleRate);
+
+    // Use aubio.js for beat detection with optimized parameters
+    const { Tempo } = await aubio();
+    const tempo = new Tempo(2048, 512, sampleRate);  // Larger buffer size for better accuracy
     let beatTimes: number[] = [];
     let totalFrames = 0;
     
+    // Create a buffer for processing
     const hopSize = 512;
-    const bufferSize = 1024;
+    const bufferSize = 2048;
     const processBuffer = new Float32Array(bufferSize);
     
+    // Process in hops
     for (let i = 0; i < data.length - bufferSize; i += hopSize) {
+      // Copy data into process buffer
       for (let j = 0; j < bufferSize; j++) {
         processBuffer[j] = data[i + j];
       }
       
+      // Process this frame
       const result = tempo.do(processBuffer);
       if (result !== 0) {
         const beatTimeMs = (totalFrames / sampleRate) * 1000;
@@ -293,10 +312,12 @@ export function useAudioPlayer() {
     const bpm = tempo.getBpm();
     console.log('Detected BPM:', bpm);
     
+    // Adjust BPM to standard range and refine beat times
     let adjustedBpm = bpm;
     if (adjustedBpm < 90) adjustedBpm *= 2;
     if (adjustedBpm > 180) adjustedBpm /= 2;
     
+    // Group beats into 32-beat phrases
     const phrases: {startTime: number, endTime: number}[] = [];
     for (let i = 0; i < beatTimes.length; i += 32) {
       const startTime = beatTimes[i];
@@ -305,7 +326,7 @@ export function useAudioPlayer() {
       phrases.push({ startTime, endTime });
     }
 
-    return { beatTimes, phrases, bpm };
+    return { beatTimes, phrases, bpm: adjustedBpm };
   }
 
   return {
