@@ -184,7 +184,7 @@ export function useAudioPlayer() {
           sourceNode.buffer = audioBuffer;
           const stretchNode = await SignalsmithStretch(track.audioContext);
           const semitones = -12 * Math.log2(globalTempo / track.bpm);
-          stretchNode.schedule({ rate: 1.0, semitones });
+          stretchNode.schedule({ rate: 1.0, semitones: semitones });
           stretchNode.start();
 
           sourceNode.connect(stretchNode);

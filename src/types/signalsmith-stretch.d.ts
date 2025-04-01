@@ -10,8 +10,9 @@ declare module 'signalsmith-stretch' {
     setState(options: { sample: { speed: number } }): void;
     setUpdateInterval(seconds: number, callback?: (time: number) => void): void;
     setTimeMap(segments: TimeMapSegment[]): void;
-    schedule(options: { rate: number }): void;
+    schedule(options: { rate: number; semitones: number }): void;
     start(): void;
+    stop(): void;
   }
 
   function SignalsmithStretch(audioContext: AudioContext, options?: AudioWorkletNodeOptions): Promise<StretchNode>;
