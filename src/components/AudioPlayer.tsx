@@ -6,7 +6,6 @@ import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import PauseIcon from '@mui/icons-material/Pause';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
 import VolumeUpIcon from '@mui/icons-material/VolumeUp';
-import { analyze } from 'web-audio-beat-detector';
 import * as mm from 'music-metadata';
 import aubio from 'aubiojs';
 
