@@ -16,29 +16,39 @@ export default function AudioPlayer() {
 
   return (
     <Paper elevation={3} sx={{ 
-      p: 3, 
+      p: 2,
       width: '100%', 
       height: '100%', 
       borderRadius: 0,
       display: 'flex',
-      flexDirection: 'column'
+      flexDirection: 'column',
+      boxSizing: 'border-box',
+      overflow: 'hidden'
     }}>
       <Box sx={{ 
         display: 'flex', 
         flexDirection: 'column',
         gap: 2,
-        height: '100%'
+        height: '100%',
+        width: '100%',
+        boxSizing: 'border-box',
+        overflow: 'hidden'
       }}>
         <Box sx={{ 
           display: 'flex', 
           gap: 2,
-          alignItems: 'center'
+          alignItems: 'center',
+          width: '100%',
+          boxSizing: 'border-box',
+          overflow: 'hidden',
+          flexShrink: 0
         }}>
           <Box sx={{ 
             display: 'flex', 
             gap: 2,
             alignItems: 'center',
-            minWidth: '300px'
+            minWidth: '300px',
+            flexShrink: 0
           }}>
             <input
               type="file"
@@ -63,7 +73,10 @@ export default function AudioPlayer() {
             </label>
           </Box>
 
-          <Box sx={{ flex: 1 }}>
+          <Box sx={{ 
+            flex: 1,
+            minWidth: 0
+          }}>
             <TempoControl 
               tempo={globalTempo} 
               onChange={handleTempoChange} 
@@ -71,7 +84,13 @@ export default function AudioPlayer() {
           </Box>
         </Box>
 
-        <Box sx={{ flex: 1, overflow: 'auto' }}>
+        <Box sx={{ 
+          flex: 1, 
+          overflow: 'auto',
+          width: '100%',
+          boxSizing: 'border-box',
+          minHeight: 0  // Allow flex container to shrink
+        }}>
           <TrackList 
             tracks={tracks} 
             onPlayPause={handlePlayPause} 
