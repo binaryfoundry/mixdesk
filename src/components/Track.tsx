@@ -73,12 +73,12 @@ export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
       // Find max absolute value in this segment
       for (let j = start; j < end; j++) {
         const absValue = Math.abs(data[j]);
-        if (absValue > max) max = absValue;
+        const squaredValue = absValue * absValue;
+        if (squaredValue > max) max = squaredValue;
       }
 
-      // Use square root scaling
-      const sqrtValue = Math.sqrt(max);
-      const height = sqrtValue * amp * 2; // Multiply by 2 to make it more visible
+      // Use squared value
+      const height = max * amp * 2; // Multiply by 2 to make it more visible
       const y = amp - height / 2;
       
       ctx.moveTo(i, y);
