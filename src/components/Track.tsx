@@ -15,7 +15,7 @@ interface TrackProps {
     };
     isPlaying: boolean;
     volume: number;
-    bpm: number;
+    originalTempo: number;
     audioBuffer: AudioBuffer | null;
   };
   onPlayPause: (trackId: string) => void;
@@ -109,7 +109,7 @@ export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
             {track.metadata.title || track.file.name}
           </Typography>
           <Typography variant="caption" color="text.secondary">
-            Key: {track.metadata.key} | BPM: {Math.round(track.bpm)}
+            Key: {track.metadata.key} | BPM: {Math.round(track.originalTempo)}
           </Typography>
         </Box>
 

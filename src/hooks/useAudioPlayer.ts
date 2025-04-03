@@ -25,7 +25,7 @@ interface Track {
   duration: number;
   volume: number;
   tempo: number;
-  bpm: number;
+  originalTempo: number;
 }
 
 export function useAudioPlayer() {
@@ -140,16 +140,16 @@ export function useAudioPlayer() {
             duration: audioBuffer.duration,
             volume: 1,
             tempo: 120,
-            bpm: trackMetadata.bpm || 120
+            originalTempo: trackMetadata.bpm || 120
           };
 
           if (newTrack.gainNode) {
             newTrack.gainNode.gain.value = newTrack.volume;
           }
 
-          detectBeats(audioBuffer, trackMetadata.bpm).then(({ beatTimes, phrases, bpm }) => {
+          detectBeats(audioBuffer).then(({ beatTimes, phrases, bpm }) => {
             updateTrack(newTrack.id, {
-              bpm,
+              originalTempo: bpm,
               beats: beatTimes,
               phrases
             });
@@ -185,7 +185,7 @@ export function useAudioPlayer() {
         if (sourceNode) {
           sourceNode.buffer = audioBuffer;
           const stretchNode = await SignalsmithStretch(track.audioContext);
-          const semitones = -12 * Math.log2(globalTempo / track.bpm);
+          const semitones = -12 * Math.log2(globalTempo / track.originalTempo);
           stretchNode.schedule({ rate: 1.0, semitones: semitones });
           stretchNode.start();
 
@@ -198,7 +198,7 @@ export function useAudioPlayer() {
             track.gainNode.gain.value = track.volume;
           }
 
-          const rate = globalTempo / track.bpm;
+          const rate = globalTempo / track.originalTempo;
           sourceNode.playbackRate.value = rate;
           sourceNode.start(0, validCurrentTime);
           
@@ -231,11 +231,11 @@ export function useAudioPlayer() {
 
     tracks.forEach(track => {
       if (track.sourceNode) {
-        const rate = newTempo / track.bpm;
+        const rate = newTempo / track.originalTempo;
         track.sourceNode.playbackRate.value = rate;
       }
       if (track.stretchNode) {
-        const semitones = -12 * Math.log2(newTempo / track.bpm);
+        const semitones = -12 * Math.log2(newTempo / track.originalTempo);
         track.stretchNode.schedule({ rate: 1.0, semitones });
       }
       updateTrack(track.id, { tempo: newTempo });
