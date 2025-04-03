@@ -1,4 +1,4 @@
-import { Box, Button, Paper, Typography } from '@mui/material';
+import { Box, Button, Paper } from '@mui/material';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
 import { useAudioPlayer } from '../hooks/useAudioPlayer';
 import { TrackList } from './TrackList';
@@ -25,43 +25,59 @@ export default function AudioPlayer() {
     }}>
       <Box sx={{ 
         display: 'flex', 
-        flexDirection: 'column', 
-        gap: 2, 
-        maxWidth: '1200px', 
-        mx: 'auto',
-        flex: 1,
+        flexDirection: 'column',
+        gap: 2,
         height: '100%'
       }}>
-        <Typography variant="h5" gutterBottom>
-          MixDesk
-        </Typography>
-        
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-          <Button
-            variant="contained"
-            component="label"
-            startIcon={<UploadFileIcon />}
-          >
-            Upload Audio
+        <Box sx={{ 
+          display: 'flex', 
+          gap: 2,
+          alignItems: 'center'
+        }}>
+          <Box sx={{ 
+            display: 'flex', 
+            gap: 2,
+            alignItems: 'center',
+            minWidth: '300px'
+          }}>
             <input
               type="file"
-              hidden
               accept="audio/*"
-              onChange={handleFileUpload}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) {
+                  handleFileUpload(e);
+                }
+              }}
+              style={{ display: 'none' }}
+              id="audio-upload"
             />
-          </Button>
+            <label htmlFor="audio-upload">
+              <Button
+                variant="contained"
+                component="span"
+                startIcon={<UploadFileIcon />}
+              >
+                Upload Track
+              </Button>
+            </label>
+          </Box>
+
+          <Box sx={{ flex: 1 }}>
+            <TempoControl 
+              tempo={globalTempo} 
+              onChange={handleTempoChange} 
+            />
+          </Box>
         </Box>
 
-        <TempoControl 
-          tempo={globalTempo}
-          onChange={handleTempoChange}
-        />
-
-        <TrackList
-          tracks={tracks}
-          onPlayPause={handlePlayPause}
-          onVolumeChange={handleVolumeChange}
-        />
+        <Box sx={{ flex: 1, overflow: 'auto' }}>
+          <TrackList 
+            tracks={tracks} 
+            onPlayPause={handlePlayPause} 
+            onVolumeChange={handleVolumeChange} 
+          />
+        </Box>
       </Box>
     </Paper>
   );

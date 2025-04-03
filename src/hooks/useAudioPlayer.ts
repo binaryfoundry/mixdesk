@@ -9,7 +9,7 @@ interface TrackMetadata {
   bpm: number;
 }
 
-interface Track {
+export interface Track {
   id: string;
   file: File;
   metadata: TrackMetadata;

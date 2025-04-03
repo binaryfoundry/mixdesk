@@ -1,19 +1,6 @@
 import { Box } from '@mui/material';
-import { Track } from './Track';
-
-interface Track {
-  id: string;
-  file: File;
-  metadata: {
-    title: string;
-    key: string;
-    bpm: number;
-  };
-  isPlaying: boolean;
-  volume: number;
-  bpm: number;
-  audioBuffer: AudioBuffer;
-}
+import { Track as TrackComponent } from './Track';
+import { Track } from '../hooks/useAudioPlayer';
 
 interface TrackListProps {
   tracks: Track[];
@@ -25,7 +12,7 @@ export function TrackList({ tracks, onPlayPause, onVolumeChange }: TrackListProp
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
       {tracks.map(track => (
-        <Track
+        <TrackComponent
           key={track.id}
           track={track}
           onPlayPause={onPlayPause}

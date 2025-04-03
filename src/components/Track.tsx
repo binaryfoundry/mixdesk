@@ -3,21 +3,10 @@ import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import PauseIcon from '@mui/icons-material/Pause';
 import VolumeUpIcon from '@mui/icons-material/VolumeUp';
 import { useEffect, useRef, useState } from 'react';
+import { Track as TrackType } from '../hooks/useAudioPlayer';
 
 interface TrackProps {
-  track: {
-    id: string;
-    file: File;
-    metadata: {
-      title: string;
-      key: string;
-      bpm: number;
-    };
-    isPlaying: boolean;
-    volume: number;
-    originalTempo: number;
-    audioBuffer: AudioBuffer | null;
-  };
+  track: TrackType;
   onPlayPause: (trackId: string) => void;
   onVolumeChange: (trackId: string, value: number | number[]) => void;
 }
@@ -96,19 +85,28 @@ export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
       p: 2,
       border: '1px solid',
       borderColor: 'divider',
-      borderRadius: 1
+      borderRadius: 1,
+      width: '100%',
+      boxSizing: 'border-box',
+      overflow: 'hidden'  // Prevent any overflow
     }}>
       <Box sx={{ 
         display: 'flex', 
         alignItems: 'center', 
         gap: 2,
         flexWrap: 'wrap',
+        width: '100%'
       }}>
-        <Box sx={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
-          <Typography variant="body2" color="text.secondary">
+        <Box sx={{ 
+          display: 'flex', 
+          flexDirection: 'column', 
+          flex: 1,
+          minWidth: 0  // Allow text to shrink
+        }}>
+          <Typography variant="body2" color="text.secondary" noWrap>
             {track.metadata.title || track.file.name}
           </Typography>
-          <Typography variant="caption" color="text.secondary">
+          <Typography variant="caption" color="text.secondary" noWrap>
             Key: {track.metadata.key} | BPM: {Math.round(track.originalTempo)}
           </Typography>
         </Box>
@@ -117,7 +115,7 @@ export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
           variant="contained"
           onClick={() => onPlayPause(track.id)}
           startIcon={track.isPlaying ? <PauseIcon /> : <PlayArrowIcon />}
-          sx={{ minWidth: '120px' }}
+          sx={{ minWidth: '120px', flexShrink: 0 }}
           disabled={isLoading}
         >
           {track.isPlaying ? 'Pause' : 'Play'}
@@ -128,7 +126,8 @@ export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
           alignItems: 'center', 
           gap: 1, 
           width: { xs: '100%', sm: '200px' },
-          minWidth: '200px'
+          minWidth: '200px',
+          flexShrink: 0
         }}>
           <VolumeUpIcon color={track.volume === 0 ? 'disabled' : 'primary'} />
           <Slider
@@ -143,14 +142,20 @@ export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
         </Box>
       </Box>
 
-      <Box sx={{ width: '100%' }}>
+      <Box sx={{ 
+        width: '100%',
+        overflow: 'hidden',
+        position: 'relative'  // Create a new stacking context
+      }}>
         <canvas 
           ref={canvasRef} 
           style={{ 
             width: '100%', 
             height: '60px',
             backgroundColor: '#f5f5f5',
-            borderRadius: '4px'
+            borderRadius: '4px',
+            display: 'block',
+            position: 'relative'  // Position within the container
           }} 
         />
       </Box>
