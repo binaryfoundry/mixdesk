@@ -23,8 +23,8 @@ export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
     if (!ctx) return;
 
     // Set canvas dimensions
-    canvas.width = canvas.offsetWidth;
-    canvas.height = 60;
+    canvas.width = canvas.offsetWidth * 32;  // Quadruple the width for higher resolution
+    canvas.height = 120;
 
     // Clear canvas
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -151,11 +151,11 @@ export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
           ref={canvasRef} 
           style={{ 
             width: '100%', 
-            height: '60px',
+            height: '120px',  // Double the height
             backgroundColor: '#f5f5f5',
             borderRadius: '4px',
             display: 'block',
-            position: 'relative'  // Position within the container
+            position: 'relative'
           }} 
         />
       </Box>
