@@ -14,6 +14,7 @@ interface Track {
   file: File;
   metadata: TrackMetadata;
   audioContext: AudioContext;
+  audioBuffer: AudioBuffer | null;
   sourceNode: AudioBufferSourceNode | null;
   gainNode: GainNode | null;
   stretchNode: any | null;
@@ -128,6 +129,7 @@ export function useAudioPlayer() {
             file,
             metadata: trackMetadata,
             audioContext: audioSetup.audioContext,
+            audioBuffer: audioBuffer,
             sourceNode,
             gainNode: audioSetup.gainNode,
             stretchNode: null,
