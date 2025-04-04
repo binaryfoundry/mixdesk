@@ -97,25 +97,32 @@ export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
 
     // Draw beat markers
     if (track.beats && track.beats.length > 0) {
-      ctx.beginPath();
-      ctx.strokeStyle = '#000000';
-      ctx.lineWidth = 1;
-      //ctx.setLineDash([2, 2]);
+      // Define alternating shades of grey
+      const lightGrey = 'rgba(200, 200, 200, 0.3)';
+      const darkGrey = 'rgba(150, 150, 150, 0.3)';
 
-      track.beats.forEach(beat => {
+      // Draw beat rectangles
+      for (let i = 0; i < track.beats.length - 1; i++) {
+        const currentBeat = track.beats[i];
+        const nextBeat = track.beats[i + 1];
+
         // Convert milliseconds to seconds and account for zoom and offset
-        const beatTime = beat / 1000;
-        const beatPosition = (beatTime / track.duration) * data.length;
-        const x = ((beatPosition - visibleStart) / visibleSamples) * canvas.width;
-        
-        // Only draw beats that are within the visible range
-        if (x >= 0 && x <= canvas.width) {
-          ctx.moveTo(x, 0);
-          ctx.lineTo(x, canvas.height);
-        }
-      });
+        const currentBeatTime = currentBeat / 1000;
+        const nextBeatTime = nextBeat / 1000;
 
-      ctx.stroke();
+        const currentBeatPosition = (currentBeatTime / track.duration) * data.length;
+        const nextBeatPosition = (nextBeatTime / track.duration) * data.length;
+
+        const x1 = ((currentBeatPosition - visibleStart) / visibleSamples) * canvas.width;
+        const x2 = ((nextBeatPosition - visibleStart) / visibleSamples) * canvas.width;
+        
+        // Only draw if at least part of the rectangle is visible
+        if (x2 > 0 && x1 < canvas.width) {
+          // Use alternating colors
+          ctx.fillStyle = i % 2 === 0 ? lightGrey : darkGrey;
+          ctx.fillRect(x1, 0, x2 - x1, canvas.height);
+        }
+      }
     }
   }, [track.audioBuffer, track.beats, track.duration, zoom, offset]);
 
@@ -193,7 +200,7 @@ export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
           ref={canvasRef} 
           style={{ 
             width: '100%', 
-            height: '120px',
+            height: '300px',
             backgroundColor: '#f5f5f5',
             borderRadius: '4px',
             display: 'block',
@@ -242,7 +249,7 @@ export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
             onChange={(e, v) => setOffset(v as number)}
             min={0}
             max={1}
-            step={0.01}
+            step={0.001}
             size="small"
             sx={{ flex: 1 }}
           />
