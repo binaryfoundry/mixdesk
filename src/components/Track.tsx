@@ -25,14 +25,14 @@ export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
     if (!ctx) return;
 
     // Set canvas dimensions
-    canvas.width = canvas.offsetWidth * 4;  // 4x resolution
+    canvas.width = canvas.offsetWidth;  // 4x resolution
     canvas.height = 120;
 
     // Clear canvas and reset context state
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.setTransform(1, 0, 0, 1, 0, 0);  // Reset transform matrix
     ctx.setLineDash([]);  // Reset line dash
-    ctx.lineWidth = 2;  // Reset line width
+    ctx.lineWidth = 1;  // Reset line width
     ctx.strokeStyle = '#4a9eff';  // Reset stroke style
 
     if (!track.audioBuffer) {
@@ -99,8 +99,8 @@ export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
     if (track.beats && track.beats.length > 0) {
       ctx.beginPath();
       ctx.strokeStyle = '#000000';
-      ctx.lineWidth = 3;
-      ctx.setLineDash([2, 2]);
+      ctx.lineWidth = 1;
+      //ctx.setLineDash([2, 2]);
 
       track.beats.forEach(beat => {
         // Convert milliseconds to seconds and account for zoom and offset
