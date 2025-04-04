@@ -14,6 +14,7 @@ interface TrackProps {
 export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [zoom, setZoom] = useState(1);  // Zoom factor, 1 = normal, >1 = zoomed in
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -23,11 +24,15 @@ export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
     if (!ctx) return;
 
     // Set canvas dimensions
-    canvas.width = canvas.offsetWidth * 4;  // Quadruple the width for higher resolution
+    canvas.width = canvas.offsetWidth * 4;  // 4x resolution
     canvas.height = 120;
 
-    // Clear canvas
+    // Clear canvas and reset context state
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);  // Reset transform matrix
+    ctx.setLineDash([]);  // Reset line dash
+    ctx.lineWidth = 2;  // Reset line width
+    ctx.strokeStyle = '#4a9eff';  // Reset stroke style
 
     if (!track.audioBuffer) {
       // Draw loading state
@@ -46,31 +51,46 @@ export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
 
     // Get audio data
     const data = track.audioBuffer.getChannelData(0);
-    const step = Math.ceil(data.length / canvas.width);
     const amp = canvas.height / 2;
-    const hscale = 1;
 
-    // Draw waveform
+    const visibleSamples = data.length / zoom;
+    const step = Math.ceil(visibleSamples / canvas.width);
+
+    // Optional: add horizontal scroll support
+    const offset = 0; // Change this if you want scrolling (range: 0 to data.length - visibleSamples)
+
+    const visibleStart = Math.floor(offset);
+    const visibleEnd = Math.min(data.length, visibleStart + visibleSamples);
+
+    // 🔍 Step 1: Find the max amplitude in the visible window
+    let visibleMax = 0;
+    for (let i = visibleStart; i < visibleEnd; i++) {
+      const absValue = Math.abs(data[i]);
+      if (absValue > visibleMax) visibleMax = absValue;
+    }
+
+    // Avoid division by 0
+    if (visibleMax === 0) visibleMax = 1;
+
+    // 🎨 Step 2: Draw the normalized waveform
+    ctx.clearRect(0, 0, canvas.width, canvas.height); // Clear previous frame
     ctx.beginPath();
-    ctx.strokeStyle = '#4a9eff';
-    ctx.lineWidth = 2;
 
     for (let i = 0; i < canvas.width; i++) {
       let max = 0;
-      const start = Math.floor(i) * step;
+
+      const start = Math.floor(visibleStart + i * step);
       const end = Math.min(start + step, data.length);
 
-      // Find max absolute value in this segment
       for (let j = start; j < end; j++) {
-        const absValue = Math.abs(data[j / hscale]);
-        const squaredValue = absValue * absValue;
-        if (squaredValue > max) max = squaredValue;
+        const absValue = Math.abs(data[j]);
+        if (absValue > max) max = absValue;
       }
 
-      // Use squared value
-      const height = max * amp * 2; // Multiply by 2 to make it more visible
+      const normalized = max / visibleMax; // Normalize to [0, 1] based on visible window
+      const height = normalized * amp * 2;
       const y = amp - height / 2;
-      
+
       ctx.moveTo(i, y);
       ctx.lineTo(i, y + height);
     }
@@ -79,32 +99,25 @@ export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
 
     // Draw beat markers
     if (track.beats && track.beats.length > 0) {
-      console.log('Drawing beats:', track.beats);
       ctx.beginPath();
       ctx.strokeStyle = '#000000';
-      ctx.lineWidth = 1;
-      ctx.setLineDash([2, 2]);  // Shorter dashes for beats
+      ctx.lineWidth = 3;
+      ctx.setLineDash([2, 2]);
 
       track.beats.forEach(beat => {
-        // Convert milliseconds to seconds and account for 4x resolution
-        const x = (beat / 1000 / track.duration) * canvas.width;
+        // Convert milliseconds to seconds and account for zoom
+        const x = (beat / 1000 / track.duration) * canvas.width * zoom;
         
-        console.log('Drawing beat:', { 
-          x, 
-          duration: track.duration,
-          canvasWidth: canvas.width,
-          offsetWidth: canvas.offsetWidth
-        });
-        
-        // Draw vertical line
-        ctx.moveTo(x, 0);
-        ctx.lineTo(x, canvas.height);
+        // Only draw beats that are within the visible range
+        if (x >= 0 && x <= canvas.width) {
+          ctx.moveTo(x, 0);
+          ctx.lineTo(x, canvas.height);
+        }
       });
 
       ctx.stroke();
-      ctx.setLineDash([]);
     }
-  }, [track.audioBuffer, track.beats, track.duration]);  // Update dependencies
+  }, [track.audioBuffer, track.beats, track.duration, zoom]);  // Add zoom to dependencies
 
   return (
     <Box sx={{ 
@@ -117,7 +130,7 @@ export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
       borderRadius: 1,
       width: '100%',
       boxSizing: 'border-box',
-      overflow: 'hidden'  // Prevent any overflow
+      overflow: 'hidden'
     }}>
       <Box sx={{ 
         display: 'flex', 
@@ -130,7 +143,7 @@ export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
           display: 'flex', 
           flexDirection: 'column', 
           flex: 1,
-          minWidth: 0  // Allow text to shrink
+          minWidth: 0
         }}>
           <Typography variant="body2" color="text.secondary" noWrap>
             {track.metadata.title || track.file.name}
@@ -174,18 +187,38 @@ export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
       <Box sx={{ 
         width: '100%',
         overflow: 'hidden',
-        position: 'relative'  // Create a new stacking context
+        position: 'relative'
       }}>
         <canvas 
           ref={canvasRef} 
           style={{ 
             width: '100%', 
-            height: '120px',  // Double the height
+            height: '120px',
             backgroundColor: '#f5f5f5',
             borderRadius: '4px',
             display: 'block',
             position: 'relative'
           }} 
+        />
+      </Box>
+
+      <Box sx={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 1,
+        width: '100%'
+      }}>
+        <Typography variant="caption" color="text.secondary">
+          Zoom:
+        </Typography>
+        <Slider
+          value={zoom}
+          onChange={(e, v) => setZoom(v as number)}
+          min={0.1}
+          max={20}
+          step={0.1}
+          size="small"
+          sx={{ flex: 1 }}
         />
       </Box>
     </Box>
