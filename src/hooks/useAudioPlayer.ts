@@ -26,6 +26,7 @@ export interface Track {
   volume: number;
   tempo: number;
   originalTempo: number;
+  downbeatOffset: number;
 }
 
 export function useAudioPlayer() {
@@ -140,18 +141,20 @@ export function useAudioPlayer() {
             duration: audioBuffer.duration,
             volume: 1,
             tempo: 120,
-            originalTempo: trackMetadata.bpm || 120
+            originalTempo: trackMetadata.bpm || 120,
+            downbeatOffset: 0
           };
 
           if (newTrack.gainNode) {
             newTrack.gainNode.gain.value = newTrack.volume;
           }
 
-          detectBeats(audioBuffer).then(({ beatTimes, phrases, bpm }) => {
+          detectBeats(audioBuffer).then(({ beatTimes, phrases, bpm, downbeatOffset }) => {
             updateTrack(newTrack.id, {
               originalTempo: bpm,
               beats: beatTimes,
-              phrases
+              phrases,
+              downbeatOffset
             });
           });
 
@@ -245,7 +248,8 @@ export function useAudioPlayer() {
   async function detectBeats(buffer: AudioBuffer): Promise<{
     beatTimes: number[], 
     phrases: { startTime: number, endTime: number }[],
-    bpm: number
+    bpm: number,
+    downbeatOffset: number
   }> {
     const sampleRate = buffer.sampleRate;
     const numSamples = buffer.length;
@@ -386,6 +390,23 @@ export function useAudioPlayer() {
       beatTimes = interpolatedBeats;
     }
 
+    // === Estimate Downbeat Offset (based on alignment strength) ===
+    const getOffsetScore = (offset: number) => {
+      let score = 0;
+      for (let i = offset; i < beatTimes.length - 4; i += 4) {
+        const strength = beatTimes[i + 1] - beatTimes[i]; // use spacing as proxy
+        score += strength;
+      }
+      return score;
+    };
+
+    const offsets = [0, 1, 2, 3];
+    const bestOffset = offsets.reduce((best, current) =>
+      getOffsetScore(current) > getOffsetScore(best) ? current : best
+    , 0);
+
+    console.log('Best downbeat offset:', bestOffset);
+
     // Group beats into 32-beat phrases
     const phrases: {startTime: number, endTime: number}[] = [];
     for (let i = 0; i < beatTimes.length; i += 32) {
@@ -395,7 +416,7 @@ export function useAudioPlayer() {
       phrases.push({ startTime, endTime });
     }
 
-    return { beatTimes, phrases, bpm: adjustedBpm };
+    return { beatTimes, phrases, bpm: adjustedBpm, downbeatOffset: bestOffset };
   }
 
   return {

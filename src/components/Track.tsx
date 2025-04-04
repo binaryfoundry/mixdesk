@@ -2,7 +2,7 @@ import { Box, Button, Slider, Typography } from '@mui/material';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import PauseIcon from '@mui/icons-material/Pause';
 import VolumeUpIcon from '@mui/icons-material/VolumeUp';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { Track as TrackType } from '../hooks/useAudioPlayer';
 
 interface TrackProps {
@@ -17,7 +17,7 @@ export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
   const [zoom, setZoom] = useState(1);  // Zoom factor, 1 = normal, >1 = zoomed in
   const [offset, setOffset] = useState(0);  // Horizontal offset, 0 = start, 1 = end
 
-  useEffect(() => {
+  const drawWaveform = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
@@ -98,10 +98,10 @@ export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
     // Draw beat markers
     if (track.beats && track.beats.length > 0) {
       // Define alternating shades of grey
-      const lightGrey = 'rgba(200, 200, 200, 0.3)';
-      const darkGrey = 'rgba(150, 150, 150, 0.3)';
+      const lightGrey = 'rgba(200, 200, 200, 0.0)';
+      const darkGrey = 'rgba(200, 200, 200, 0.2)';
 
-      // Draw beat rectangles
+      // Draw beat rectangles and downbeat lines
       for (let i = 0; i < track.beats.length - 1; i++) {
         const currentBeat = track.beats[i];
         const nextBeat = track.beats[i + 1];
@@ -119,12 +119,28 @@ export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
         // Only draw if at least part of the rectangle is visible
         if (x2 > 0 && x1 < canvas.width) {
           // Use alternating colors
-          ctx.fillStyle = i % 2 === 0 ? lightGrey : darkGrey;
+          ctx.fillStyle = i % 2 === 0 ? darkGrey : lightGrey;
           ctx.fillRect(x1, 0, x2 - x1, canvas.height);
+
+          // Draw dashed line at the start of each bar
+          if (i % 4 === track.downbeatOffset) {
+            ctx.setLineDash([2, 2]); // Set dash pattern
+            ctx.strokeStyle = '#888888';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(x1, 0);
+            ctx.lineTo(x1, canvas.height);
+            ctx.stroke();
+            ctx.setLineDash([]); // Reset dash pattern
+          }
         }
       }
     }
-  }, [track.audioBuffer, track.beats, track.duration, zoom, offset]);
+  }, [track.audioBuffer, track.beats, track.duration, track.downbeatOffset, zoom, offset]);
+
+  useEffect(() => {
+    drawWaveform();
+  }, [drawWaveform]);
 
   return (
     <Box sx={{
