@@ -15,6 +15,7 @@ export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [zoom, setZoom] = useState(1);  // Zoom factor, 1 = normal, >1 = zoomed in
+  const [offset, setOffset] = useState(0);  // Horizontal offset, 0 = start, 1 = end
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -56,13 +57,11 @@ export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
     const visibleSamples = data.length / zoom;
     const step = Math.ceil(visibleSamples / canvas.width);
 
-    // Optional: add horizontal scroll support
-    const offset = 0; // Change this if you want scrolling (range: 0 to data.length - visibleSamples)
-
-    const visibleStart = Math.floor(offset);
+    // Calculate visible range based on offset
+    const visibleStart = Math.floor(offset * (data.length - visibleSamples));
     const visibleEnd = Math.min(data.length, visibleStart + visibleSamples);
 
-    // 🔍 Step 1: Find the max amplitude in the visible window
+    // Find the max amplitude in the visible window
     let visibleMax = 0;
     for (let i = visibleStart; i < visibleEnd; i++) {
       const absValue = Math.abs(data[i]);
@@ -72,8 +71,7 @@ export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
     // Avoid division by 0
     if (visibleMax === 0) visibleMax = 1;
 
-    // 🎨 Step 2: Draw the normalized waveform
-    ctx.clearRect(0, 0, canvas.width, canvas.height); // Clear previous frame
+    // Draw the normalized waveform
     ctx.beginPath();
 
     for (let i = 0; i < canvas.width; i++) {
@@ -105,8 +103,10 @@ export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
       ctx.setLineDash([2, 2]);
 
       track.beats.forEach(beat => {
-        // Convert milliseconds to seconds and account for zoom
-        const x = (beat / 1000 / track.duration) * canvas.width * zoom;
+        // Convert milliseconds to seconds and account for zoom and offset
+        const beatTime = beat / 1000;
+        const beatPosition = (beatTime / track.duration) * data.length;
+        const x = ((beatPosition - visibleStart) / visibleSamples) * canvas.width;
         
         // Only draw beats that are within the visible range
         if (x >= 0 && x <= canvas.width) {
@@ -117,11 +117,11 @@ export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
 
       ctx.stroke();
     }
-  }, [track.audioBuffer, track.beats, track.duration, zoom]);  // Add zoom to dependencies
+  }, [track.audioBuffer, track.beats, track.duration, zoom, offset]);
 
   return (
-    <Box sx={{ 
-      display: 'flex', 
+    <Box sx={{
+      display: 'flex',
       flexDirection: 'column',
       gap: 2,
       p: 2,
@@ -139,9 +139,9 @@ export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
         flexWrap: 'wrap',
         width: '100%'
       }}>
-        <Box sx={{ 
-          display: 'flex', 
-          flexDirection: 'column', 
+        <Box sx={{
+          display: 'flex',
+          flexDirection: 'column',
           flex: 1,
           minWidth: 0
         }}>
@@ -204,22 +204,49 @@ export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
 
       <Box sx={{
         display: 'flex',
-        alignItems: 'center',
+        flexDirection: 'column',
         gap: 1,
         width: '100%'
       }}>
-        <Typography variant="caption" color="text.secondary">
-          Zoom:
-        </Typography>
-        <Slider
-          value={zoom}
-          onChange={(e, v) => setZoom(v as number)}
-          min={0.1}
-          max={20}
-          step={0.1}
-          size="small"
-          sx={{ flex: 1 }}
-        />
+        <Box sx={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 1,
+          width: '100%'
+        }}>
+          <Typography variant="caption" color="text.secondary" sx={{ minWidth: '60px' }}>
+            Zoom:
+          </Typography>
+          <Slider
+            value={zoom}
+            onChange={(e, v) => setZoom(v as number)}
+            min={0.1}
+            max={20}
+            step={0.1}
+            size="small"
+            sx={{ flex: 1 }}
+          />
+        </Box>
+
+        <Box sx={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 1,
+          width: '100%'
+        }}>
+          <Typography variant="caption" color="text.secondary" sx={{ minWidth: '60px' }}>
+            Offset:
+          </Typography>
+          <Slider
+            value={offset}
+            onChange={(e, v) => setOffset(v as number)}
+            min={0}
+            max={1}
+            step={0.01}
+            size="small"
+            sx={{ flex: 1 }}
+          />
+        </Box>
       </Box>
     </Box>
   );
