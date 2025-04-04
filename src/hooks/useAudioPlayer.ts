@@ -325,6 +325,21 @@ export function useAudioPlayer() {
       const expectedInterval = (60000 / adjustedBpm); // Expected time between beats in ms
       const minBeatDistance = expectedInterval * 0.3; // Minimum distance between beats (30% of expected interval)
 
+      // First, interpolate from start (0ms) to first beat
+      const firstBeat = beatTimes[0];
+      if (firstBeat > expectedInterval) {
+        const numMissingBeats = Math.round(firstBeat / expectedInterval);
+        const startInterval = firstBeat / (numMissingBeats + 1);
+
+        // Add beats before zero if needed
+        let currentTime = 0;
+        while (currentTime < firstBeat) {
+          interpolatedBeats.push(Math.round(currentTime));
+          currentTime += startInterval;
+        }
+      }
+
+      // Then handle the rest of the beats
       for (let i = 0; i < beatTimes.length - 1; i++) {
         const currentBeat = beatTimes[i];
         const nextBeat = beatTimes[i + 1];
@@ -339,7 +354,6 @@ export function useAudioPlayer() {
           interpolatedBeats.push(currentBeat);
 
           // Calculate the actual interval to use for interpolation
-          // This ensures beats are evenly spaced and not too close to the detected beats
           const actualInterval = (nextBeat - currentBeat) / (numMissingBeats + 1);
 
           // Interpolate the missing beats
