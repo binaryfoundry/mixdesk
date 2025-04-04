@@ -82,30 +82,29 @@ export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
       console.log('Drawing beats:', track.beats);
       ctx.beginPath();
       ctx.strokeStyle = '#000000';
-      ctx.lineWidth = 2;
-      ctx.setLineDash([2, 2]);
+      ctx.lineWidth = 1;
+      ctx.setLineDash([2, 2]);  // Shorter dashes for beats
 
       track.beats.forEach(beat => {
         // Convert milliseconds to seconds and account for 4x resolution
-        const startX = (beat / 1000 / track.duration) * hscale * canvas.width;
-        //const endX = (phrase.endTime / 1000 / track.duration) * canvas.width;
-
-        console.log('Drawing beats:', {
-          startX,
+        const x = (beat / 1000 / track.duration) * canvas.width;
+        
+        console.log('Drawing beat:', { 
+          x, 
           duration: track.duration,
           canvasWidth: canvas.width,
           offsetWidth: canvas.offsetWidth
         });
-
-        // Draw start line
-        ctx.moveTo(startX, 0);
-        ctx.lineTo(startX, canvas.height);
+        
+        // Draw vertical line
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, canvas.height);
       });
 
       ctx.stroke();
       ctx.setLineDash([]);
     }
-  }, [track.audioBuffer, track.phrases, track.duration, track.beats]);
+  }, [track.audioBuffer, track.beats, track.duration]);  // Update dependencies
 
   return (
     <Box sx={{ 
