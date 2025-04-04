@@ -318,7 +318,60 @@ export function useAudioPlayer() {
     let adjustedBpm = bpm;
     if (adjustedBpm < 90) adjustedBpm *= 2;
     if (adjustedBpm > 180) adjustedBpm /= 2;
-    
+
+    // Interpolate missing beats
+    if (beatTimes.length > 1) {
+      const interpolatedBeats: number[] = [];
+      const expectedInterval = (60000 / adjustedBpm); // Expected time between beats in ms
+      const minBeatDistance = expectedInterval * 0.3; // Minimum distance between beats (30% of expected interval)
+
+      for (let i = 0; i < beatTimes.length - 1; i++) {
+        const currentBeat = beatTimes[i];
+        const nextBeat = beatTimes[i + 1];
+        const gap = nextBeat - currentBeat;
+
+        // If the gap is significantly larger than expected (1.5x the expected interval)
+        if (gap > expectedInterval * 1.5) {
+          // Calculate how many beats should be in this gap
+          const numMissingBeats = Math.round(gap / expectedInterval) - 1;
+
+          // Add the current beat
+          interpolatedBeats.push(currentBeat);
+
+          // Calculate the actual interval to use for interpolation
+          // This ensures beats are evenly spaced and not too close to the detected beats
+          const actualInterval = (nextBeat - currentBeat) / (numMissingBeats + 1);
+
+          // Interpolate the missing beats
+          for (let j = 1; j <= numMissingBeats; j++) {
+            const interpolatedTime = currentBeat + (j * actualInterval);
+
+            // Only add the beat if it's not too close to the previous or next beat
+            const prevBeat = interpolatedBeats[interpolatedBeats.length - 1];
+            if (interpolatedTime - prevBeat >= minBeatDistance &&
+                nextBeat - interpolatedTime >= minBeatDistance) {
+              interpolatedBeats.push(Math.round(interpolatedTime));
+            }
+          }
+        } else {
+          // For small gaps, only add the beat if it's not too close to the previous beat
+          if (i === 0 || currentBeat - interpolatedBeats[interpolatedBeats.length - 1] >= minBeatDistance) {
+            interpolatedBeats.push(currentBeat);
+          }
+        }
+      }
+
+      // Add the last beat if it's not too close to the previous one
+      const lastBeat = beatTimes[beatTimes.length - 1];
+      if (interpolatedBeats.length === 0 ||
+          lastBeat - interpolatedBeats[interpolatedBeats.length - 1] >= minBeatDistance) {
+        interpolatedBeats.push(lastBeat);
+      }
+
+      // Replace original beatTimes with interpolated ones
+      beatTimes = interpolatedBeats;
+    }
+
     // Group beats into 32-beat phrases
     const phrases: {startTime: number, endTime: number}[] = [];
     for (let i = 0; i < beatTimes.length; i += 32) {
