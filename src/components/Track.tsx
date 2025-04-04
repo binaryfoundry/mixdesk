@@ -23,7 +23,7 @@ export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
     if (!ctx) return;
 
     // Set canvas dimensions
-    canvas.width = canvas.offsetWidth * 32;  // Quadruple the width for higher resolution
+    canvas.width = canvas.offsetWidth * 4;  // Quadruple the width for higher resolution
     canvas.height = 120;
 
     // Clear canvas
@@ -48,6 +48,7 @@ export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
     const data = track.audioBuffer.getChannelData(0);
     const step = Math.ceil(data.length / canvas.width);
     const amp = canvas.height / 2;
+    const hscale = 1;
 
     // Draw waveform
     ctx.beginPath();
@@ -56,12 +57,12 @@ export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
 
     for (let i = 0; i < canvas.width; i++) {
       let max = 0;
-      const start = i * step;
+      const start = Math.floor(i) * step;
       const end = Math.min(start + step, data.length);
 
       // Find max absolute value in this segment
       for (let j = start; j < end; j++) {
-        const absValue = Math.abs(data[j]);
+        const absValue = Math.abs(data[j / hscale]);
         const squaredValue = absValue * absValue;
         if (squaredValue > max) max = squaredValue;
       }
@@ -75,7 +76,36 @@ export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
     }
 
     ctx.stroke();
-  }, [track.audioBuffer]);
+
+    // Draw beat markers
+    if (track.beats && track.beats.length > 0) {
+      console.log('Drawing beats:', track.beats);
+      ctx.beginPath();
+      ctx.strokeStyle = '#000000';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([2, 2]);
+
+      track.beats.forEach(beat => {
+        // Convert milliseconds to seconds and account for 4x resolution
+        const startX = (beat / 1000 / track.duration) * hscale * canvas.width;
+        //const endX = (phrase.endTime / 1000 / track.duration) * canvas.width;
+
+        console.log('Drawing beats:', {
+          startX,
+          duration: track.duration,
+          canvasWidth: canvas.width,
+          offsetWidth: canvas.offsetWidth
+        });
+
+        // Draw start line
+        ctx.moveTo(startX, 0);
+        ctx.lineTo(startX, canvas.height);
+      });
+
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+  }, [track.audioBuffer, track.phrases, track.duration, track.beats]);
 
   return (
     <Box sx={{ 
