@@ -318,25 +318,41 @@ export function useAudioPlayer() {
     // Create a buffer for processing
     const hopSize = 512;
     const bufferSize = 2048;
-    const processBuffer = new Float32Array(bufferSize);
 
-    // Process in hops
-    for (let i = 0; i < data.length - bufferSize; i += hopSize) {
-      // Copy data into process buffer
-      for (let j = 0; j < bufferSize; j++) {
-        processBuffer[j] = data[i + j];
-      }
+    // Process in chunks with yield to UI
+    const CHUNK_SIZE = 10000; // Process 10000 samples at a time
+    const processChunk = async (startIndex: number): Promise<void> => {
+      return new Promise(resolve => {
+        setTimeout(() => {
+          const endIndex = Math.min(startIndex + CHUNK_SIZE, data.length - bufferSize);
+          const processBuffer = new Float32Array(bufferSize);
 
-      // Process this frame
-      const confidence = tempo.do(processBuffer);
-      if (confidence !== 0) {
-        const beatTimeMs = (totalFrames / sampleRate) * 1000;
-        detectedBeats.push({
-          time: Math.round(beatTimeMs),
-          confidence: confidence
-        });
-      }
-      totalFrames += hopSize;
+          for (let i = startIndex; i < endIndex; i += hopSize) {
+            // Copy data into process buffer
+            for (let j = 0; j < bufferSize; j++) {
+              processBuffer[j] = data[i + j];
+            }
+
+            // Process this frame
+            const confidence = tempo.do(processBuffer);
+            if (confidence !== 0) {
+              const beatTimeMs = (totalFrames / sampleRate) * 1000;
+              detectedBeats.push({
+                time: Math.round(beatTimeMs),
+                confidence: confidence
+              });
+            }
+            totalFrames += hopSize;
+          }
+
+          resolve();
+        }, 0);
+      });
+    };
+
+    // Process all chunks
+    for (let i = 0; i < data.length - bufferSize; i += CHUNK_SIZE) {
+      await processChunk(i);
     }
 
     const bpm = tempo.getBpm();
@@ -349,8 +365,6 @@ export function useAudioPlayer() {
 
     // Fit regular grid based on confidence-weighted beats
     const beatInterval = (60000 / adjustedBpm); // ms between beats at the adjusted BPM
-
-    // Find optimal grid offset by trying different starting points
     const durationMs = (buffer.duration * 1000);
     const numBeats = Math.floor(durationMs / beatInterval);
 
@@ -359,30 +373,36 @@ export function useAudioPlayer() {
     let gridOffset = 0;
     let bestScore = -Infinity;
 
-    for (let i = 0; i < numTestPoints; i++) {
-      const testOffset = (beatInterval * i) / numTestPoints;
-      let score = 0;
+    // Process grid alignment in chunks
+    const GRID_CHUNK_SIZE = 5; // Process 5 test points at a time
+    for (let i = 0; i < numTestPoints; i += GRID_CHUNK_SIZE) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+      
+      for (let j = i; j < Math.min(i + GRID_CHUNK_SIZE, numTestPoints); j++) {
+        const testOffset = (beatInterval * j) / numTestPoints;
+        let score = 0;
 
-      // For each potential grid point, find nearby detected beats and score based on confidence
-      for (let beatIndex = 0; beatIndex < numBeats; beatIndex++) {
-        const gridTime = testOffset + (beatIndex * beatInterval);
+        // For each potential grid point, find nearby detected beats and score based on confidence
+        for (let beatIndex = 0; beatIndex < numBeats; beatIndex++) {
+          const gridTime = testOffset + (beatIndex * beatInterval);
 
-        // Find detected beats within 100ms of this grid point
-        const nearbyBeats = detectedBeats.filter(beat =>
-          Math.abs(beat.time - gridTime) < 100
-        );
+          // Find detected beats within 100ms of this grid point
+          const nearbyBeats = detectedBeats.filter(beat =>
+            Math.abs(beat.time - gridTime) < 100
+          );
 
-        // Score based on confidence and distance
-        for (const beat of nearbyBeats) {
-          const distance = Math.abs(beat.time - gridTime);
-          const distanceWeight = 1 - (distance / 100); // Linear falloff with distance
-          score += beat.confidence * distanceWeight;
+          // Score based on confidence and distance
+          for (const beat of nearbyBeats) {
+            const distance = Math.abs(beat.time - gridTime);
+            const distanceWeight = 1 - (distance / 100); // Linear falloff with distance
+            score += beat.confidence * distanceWeight;
+          }
         }
-      }
 
-      if (score > bestScore) {
-        bestScore = score;
-        gridOffset = testOffset;
+        if (score > bestScore) {
+          bestScore = score;
+          gridOffset = testOffset;
+        }
       }
     }
 
@@ -478,10 +498,19 @@ export function useAudioPlayer() {
 
     // Cache offset scores
     const offsets = [0, 1, 2, 3];
-    const offsetScores = offsets.map(offset => ({
-      offset,
-      score: getOffsetScore(offset)
-    }));
+    const offsetScores = [];
+    const OFFSET_CHUNK_SIZE = 2;
+
+    for (let i = 0; i < offsets.length; i += OFFSET_CHUNK_SIZE) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+      
+      for (let j = i; j < Math.min(i + OFFSET_CHUNK_SIZE, offsets.length); j++) {
+        offsetScores.push({
+          offset: offsets[j],
+          score: getOffsetScore(offsets[j])
+        });
+      }
+    }
 
     // Sort by score and get top candidates
     const sortedOffsets = offsetScores
@@ -521,17 +550,23 @@ export function useAudioPlayer() {
 
     // Calculate energy/confidence for each bar
     const barEnergies: number[] = [];
-    for (let i = bestOffset; i < beatTimes.length - beatsPerBar; i += beatsPerBar) {
-      let barEnergy = 0;
-      for (let j = 0; j < beatsPerBar; j++) {
-        const beatTime = beatTimes[i + j];
-        const nearbyBeats = detectedBeats.filter(beat =>
-          Math.abs(beat.time - beatTime) < 100
-        );
-        // Sum confidence values for this beat
-        barEnergy += nearbyBeats.reduce((sum, beat) => sum + beat.confidence, 0);
+    const BAR_CHUNK_SIZE = 10;
+
+    for (let i = bestOffset; i < beatTimes.length - beatsPerBar; i += beatsPerBar * BAR_CHUNK_SIZE) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+      
+      for (let j = i; j < Math.min(i + beatsPerBar * BAR_CHUNK_SIZE, beatTimes.length - beatsPerBar); j += beatsPerBar) {
+        let barEnergy = 0;
+        for (let k = 0; k < beatsPerBar; k++) {
+          const beatTime = beatTimes[j + k];
+          const nearbyBeats = detectedBeats.filter(beat =>
+            Math.abs(beat.time - beatTime) < 100
+          );
+          // Sum confidence values for this beat
+          barEnergy += nearbyBeats.reduce((sum, beat) => sum + beat.confidence, 0);
+        }
+        barEnergies.push(barEnergy);
       }
-      barEnergies.push(barEnergy);
     }
 
     // Detect significant changes in energy to identify phrase boundaries
