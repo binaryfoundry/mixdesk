@@ -291,7 +291,7 @@ export function useAudioPlayer() {
     // Use aubio.js for beat detection with optimized parameters
     const { Tempo } = await aubio();
     const tempo = new Tempo(2048, 512, sampleRate);  // Larger buffer size for better accuracy
-    let beatTimes: number[] = [];
+    let beats: { time: number; confidence: number; }[] = [];
     let totalFrames = 0;
     
     // Create a buffer for processing
@@ -307,14 +307,17 @@ export function useAudioPlayer() {
       }
       
       // Process this frame
-      const result = tempo.do(processBuffer);
-      if (result !== 0) {
+      const confidence = tempo.do(processBuffer);
+      if (confidence !== 0) {
         const beatTimeMs = (totalFrames / sampleRate) * 1000;
-        beatTimes.push(Math.round(beatTimeMs));
+        beats.push({
+          time: Math.round(beatTimeMs),
+          confidence: confidence
+        });
       }
       totalFrames += hopSize;
     }
-    
+    console.log(beats);
     const bpm = tempo.getBpm();
     console.log('Detected BPM:', bpm);
     
@@ -324,13 +327,13 @@ export function useAudioPlayer() {
     if (adjustedBpm > 180) adjustedBpm /= 2;
 
     // Interpolate missing beats
-    if (beatTimes.length > 1) {
-      const interpolatedBeats: number[] = [];
+    if (beats.length > 1) {
+      const interpolatedBeats: { time: number; confidence: number; }[] = [];
       const expectedInterval = (60000 / adjustedBpm); // Expected time between beats in ms
       const minBeatDistance = expectedInterval * 0.3; // Minimum distance between beats (30% of expected interval)
 
       // First, interpolate from start (0ms) to first beat
-      const firstBeat = beatTimes[0];
+      const firstBeat = beats[0].time;
       if (firstBeat > expectedInterval) {
         const numMissingBeats = Math.round(firstBeat / expectedInterval);
         const startInterval = firstBeat / (numMissingBeats + 1);
@@ -338,16 +341,19 @@ export function useAudioPlayer() {
         // Add beats before zero if needed
         let currentTime = 0;
         while (currentTime < firstBeat) {
-          interpolatedBeats.push(Math.round(currentTime));
+          interpolatedBeats.push({
+            time: Math.round(currentTime),
+            confidence: 0.5 // Lower confidence for interpolated beats
+          });
           currentTime += startInterval;
         }
       }
 
       // Then handle the rest of the beats
-      for (let i = 0; i < beatTimes.length - 1; i++) {
-        const currentBeat = beatTimes[i];
-        const nextBeat = beatTimes[i + 1];
-        const gap = nextBeat - currentBeat;
+      for (let i = 0; i < beats.length - 1; i++) {
+        const currentBeat = beats[i];
+        const nextBeat = beats[i + 1];
+        const gap = nextBeat.time - currentBeat.time;
 
         // If the gap is significantly larger than expected (1.5x the expected interval)
         if (gap > expectedInterval * 1.5) {
@@ -358,37 +364,43 @@ export function useAudioPlayer() {
           interpolatedBeats.push(currentBeat);
 
           // Calculate the actual interval to use for interpolation
-          const actualInterval = (nextBeat - currentBeat) / (numMissingBeats + 1);
+          const actualInterval = (nextBeat.time - currentBeat.time) / (numMissingBeats + 1);
 
           // Interpolate the missing beats
           for (let j = 1; j <= numMissingBeats; j++) {
-            const interpolatedTime = currentBeat + (j * actualInterval);
+            const interpolatedTime = currentBeat.time + (j * actualInterval);
 
             // Only add the beat if it's not too close to the previous or next beat
             const prevBeat = interpolatedBeats[interpolatedBeats.length - 1];
-            if (interpolatedTime - prevBeat >= minBeatDistance &&
-                nextBeat - interpolatedTime >= minBeatDistance) {
-              interpolatedBeats.push(Math.round(interpolatedTime));
+            if (interpolatedTime - prevBeat.time >= minBeatDistance &&
+                nextBeat.time - interpolatedTime >= minBeatDistance) {
+              interpolatedBeats.push({
+                time: Math.round(interpolatedTime),
+                confidence: 0.5 // Lower confidence for interpolated beats
+              });
             }
           }
         } else {
           // For small gaps, only add the beat if it's not too close to the previous beat
-          if (i === 0 || currentBeat - interpolatedBeats[interpolatedBeats.length - 1] >= minBeatDistance) {
+          if (i === 0 || currentBeat.time - interpolatedBeats[interpolatedBeats.length - 1].time >= minBeatDistance) {
             interpolatedBeats.push(currentBeat);
           }
         }
       }
 
       // Add the last beat if it's not too close to the previous one
-      const lastBeat = beatTimes[beatTimes.length - 1];
+      const lastBeat = beats[beats.length - 1];
       if (interpolatedBeats.length === 0 ||
-          lastBeat - interpolatedBeats[interpolatedBeats.length - 1] >= minBeatDistance) {
+          lastBeat.time - interpolatedBeats[interpolatedBeats.length - 1].time >= minBeatDistance) {
         interpolatedBeats.push(lastBeat);
       }
 
-      // Replace original beatTimes with interpolated ones
-      beatTimes = interpolatedBeats;
+      // Replace original beats with interpolated ones
+      beats = interpolatedBeats;
     }
+
+    // Extract just the times for the existing logic
+    const beatTimes = beats.map(beat => beat.time);
 
     // === Estimate Downbeat Offset (based on alignment strength) ===
     const getOffsetScore = (offset: number) => {
