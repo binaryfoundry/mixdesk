@@ -492,13 +492,64 @@ export function useAudioPlayer() {
 
     console.log('Best downbeat offset:', bestOffset, 'Scores:', offsetScores);
 
-    // Group beats into 32-beat phrases
+    // Group beats into musical phrases based on bars and energy patterns
     const phrases: {startTime: number, endTime: number}[] = [];
-    for (let i = 0; i < beatTimes.length; i += 32) {
-      const startTime = beatTimes[i];
-      const endIndex = (i + 31 < beatTimes.length) ? i + 31 : beatTimes.length - 1;
-      const endTime = beatTimes[endIndex];
-      phrases.push({ startTime, endTime });
+    const beatsPerBar = 4;
+    const barsPerPhrase = 8; // Standard 8-bar phrases
+    const minBarsForPhrase = 4; // Minimum bars to consider a phrase
+
+    // Calculate energy/confidence for each bar
+    const barEnergies: number[] = [];
+    for (let i = bestOffset; i < beatTimes.length - beatsPerBar; i += beatsPerBar) {
+      let barEnergy = 0;
+      for (let j = 0; j < beatsPerBar; j++) {
+        const beatTime = beatTimes[i + j];
+        const nearbyBeats = detectedBeats.filter(beat =>
+          Math.abs(beat.time - beatTime) < 100
+        );
+        // Sum confidence values for this beat
+        barEnergy += nearbyBeats.reduce((sum, beat) => sum + beat.confidence, 0);
+      }
+      barEnergies.push(barEnergy);
+    }
+
+    // Detect significant changes in energy to identify phrase boundaries
+    const energyThreshold = Math.max(...barEnergies) * 0.6; // 60% of max energy
+    let phraseStartBar = 0;
+
+    for (let bar = 1; bar < barEnergies.length; bar++) {
+      const isSignificantChange =
+        Math.abs(barEnergies[bar] - barEnergies[bar - 1]) > energyThreshold ||
+        bar - phraseStartBar >= barsPerPhrase;
+
+      // Check if we've found a phrase boundary
+      if (isSignificantChange && bar - phraseStartBar >= minBarsForPhrase) {
+        const startBeat = phraseStartBar * beatsPerBar + bestOffset;
+        const endBeat = bar * beatsPerBar + bestOffset - 1;
+
+        if (startBeat < beatTimes.length && endBeat < beatTimes.length) {
+          phrases.push({
+            startTime: beatTimes[startBeat],
+            endTime: beatTimes[endBeat]
+          });
+        }
+        phraseStartBar = bar;
+      }
+    }
+
+    // Add final phrase if there are enough remaining bars
+    const remainingBars = barEnergies.length - phraseStartBar;
+    if (remainingBars >= minBarsForPhrase) {
+      const startBeat = phraseStartBar * beatsPerBar + bestOffset;
+      const endBeat = Math.min(
+        beatTimes.length - 1,
+        (phraseStartBar + remainingBars) * beatsPerBar + bestOffset - 1
+      );
+
+      phrases.push({
+        startTime: beatTimes[startBeat],
+        endTime: beatTimes[endBeat]
+      });
     }
 
     return { beatTimes, phrases, bpm: adjustedBpm, downbeatOffset: bestOffset };
