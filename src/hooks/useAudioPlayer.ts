@@ -37,9 +37,9 @@ export function useAudioPlayer() {
 
   // Helper function to update a specific track
   const updateTrack = (trackId: string, updates: Partial<Track>) => {
-    setTracks(prevTracks => 
-      prevTracks.map(track => 
-        track.id === trackId 
+    setTracks(prevTracks =>
+      prevTracks.map(track =>
+        track.id === trackId
           ? { ...track, ...updates }
           : track
       )
@@ -53,11 +53,11 @@ export function useAudioPlayer() {
       if (track?.isPlaying && track.sourceNode) {
         const startTime = track.audioContext.currentTime || 0;
         const startOffset = track.currentTime;
-        
+
         timeUpdateIntervalRef.current = window.setInterval(() => {
           const elapsed = (track.audioContext.currentTime || 0) - startTime;
           const newTime = startOffset + elapsed;
-          
+
           if (isFinite(newTime) && newTime >= 0 && newTime <= track.duration) {
             updateTrack(activeTrackId, { currentTime: newTime });
           }
@@ -85,11 +85,11 @@ export function useAudioPlayer() {
       const arrayBuffer = await file.arrayBuffer();
       const buffer = new Uint8Array(arrayBuffer);
       const metadata = await mm.parseBuffer(buffer, file.type);
-      
+
       const title = metadata.common.title || file.name;
       const key = metadata.common.key || 'Unknown';
       const bpm = metadata.common.bpm || 0;
-      
+
       return {
         title,
         key,
@@ -109,22 +109,22 @@ export function useAudioPlayer() {
     const file = event.target.files?.[0];
     if (file) {
       console.log('Loading audio file:', file.name);
-      
+
       const audioSetup = await initAudio();
       if (!audioSetup) {
         console.error('Failed to initialize audio context');
         return;
       }
-      
+
       const trackMetadata = await readMetadata(file);
-      
+
       const arrayBuffer = await file.arrayBuffer();
       const audioBuffer = await audioSetup.audioContext.decodeAudioData(arrayBuffer);
       if (audioBuffer) {
         const sourceNode = audioSetup.audioContext.createBufferSource();
         if (sourceNode) {
           sourceNode.buffer = audioBuffer;
-          
+
           const newTrack: Track = {
             id: crypto.randomUUID(),
             file,
@@ -180,11 +180,11 @@ export function useAudioPlayer() {
         }
       } else {
         const validCurrentTime = isFinite(track.currentTime) ? track.currentTime : 0;
-        
+
         const arrayBuffer = await track.file.arrayBuffer();
         const audioBuffer = await track.audioContext.decodeAudioData(arrayBuffer);
         const sourceNode = track.audioContext.createBufferSource();
-        
+
         if (sourceNode) {
           sourceNode.buffer = audioBuffer;
           const stretchNode = await SignalsmithStretch(track.audioContext);
@@ -196,7 +196,7 @@ export function useAudioPlayer() {
           if (track.gainNode) {
             stretchNode.connect(track.gainNode);
           }
-          
+
           if (track.gainNode) {
             track.gainNode.gain.value = track.volume;
           }
@@ -204,13 +204,13 @@ export function useAudioPlayer() {
           const rate = globalTempo / track.originalTempo;
           sourceNode.playbackRate.value = rate;
           sourceNode.start(0, validCurrentTime);
-          
+
           updateTrack(trackId, {
             sourceNode,
             stretchNode,
             isPlaying: true
           });
-          
+
           setActiveTrackId(trackId);
         }
       }
@@ -246,14 +246,14 @@ export function useAudioPlayer() {
   };
 
   async function detectBeats(buffer: AudioBuffer): Promise<{
-    beatTimes: number[], 
+    beatTimes: number[],
     phrases: { startTime: number, endTime: number }[],
     bpm: number,
     downbeatOffset: number
   }> {
     const sampleRate = buffer.sampleRate;
     const numSamples = buffer.length;
-    
+
     // Create offline context for analysis
     const offlineCtx = new OfflineAudioContext(1, numSamples, sampleRate);
     const source = offlineCtx.createBufferSource();
@@ -293,19 +293,19 @@ export function useAudioPlayer() {
     const tempo = new Tempo(2048, 512, sampleRate);  // Larger buffer size for better accuracy
     let detectedBeats: { time: number; confidence: number; }[] = [];
     let totalFrames = 0;
-    
+
     // Create a buffer for processing
     const hopSize = 512;
     const bufferSize = 2048;
     const processBuffer = new Float32Array(bufferSize);
-    
+
     // Process in hops
     for (let i = 0; i < data.length - bufferSize; i += hopSize) {
       // Copy data into process buffer
       for (let j = 0; j < bufferSize; j++) {
         processBuffer[j] = data[i + j];
       }
-      
+
       // Process this frame
       const confidence = tempo.do(processBuffer);
       if (confidence !== 0) {
@@ -563,4 +563,4 @@ export function useAudioPlayer() {
     handleVolumeChange,
     handleTempoChange
   };
-} 
+}

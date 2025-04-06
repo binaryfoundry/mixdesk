@@ -7,9 +7,9 @@ interface TempoControlProps {
 
 export function TempoControl({ tempo, onChange }: TempoControlProps) {
   return (
-    <Box sx={{ 
-      display: 'flex', 
-      alignItems: 'center', 
+    <Box sx={{
+      display: 'flex',
+      alignItems: 'center',
       gap: 2,
       p: 2,
       border: '1px solid',
@@ -30,4 +30,4 @@ export function TempoControl({ tempo, onChange }: TempoControlProps) {
       />
     </Box>
   );
-} 
+}

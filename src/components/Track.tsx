@@ -115,7 +115,7 @@ export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
 
         const x1 = ((currentBeatPosition - visibleStart) / visibleSamples) * canvas.width;
         const x2 = ((nextBeatPosition - visibleStart) / visibleSamples) * canvas.width;
-        
+
         // Only draw if at least part of the rectangle is visible
         if (x2 > 0 && x1 < canvas.width) {
           // Use alternating colors
@@ -155,9 +155,9 @@ export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
       boxSizing: 'border-box',
       overflow: 'hidden'
     }}>
-      <Box sx={{ 
-        display: 'flex', 
-        alignItems: 'center', 
+      <Box sx={{
+        display: 'flex',
+        alignItems: 'center',
         gap: 2,
         flexWrap: 'wrap',
         width: '100%'
@@ -186,10 +186,10 @@ export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
           {track.isPlaying ? 'Pause' : 'Play'}
         </Button>
 
-        <Box sx={{ 
-          display: 'flex', 
-          alignItems: 'center', 
-          gap: 1, 
+        <Box sx={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 1,
           width: { xs: '100%', sm: '200px' },
           minWidth: '200px',
           flexShrink: 0
@@ -207,21 +207,21 @@ export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
         </Box>
       </Box>
 
-      <Box sx={{ 
+      <Box sx={{
         width: '100%',
         overflow: 'hidden',
         position: 'relative'
       }}>
-        <canvas 
-          ref={canvasRef} 
-          style={{ 
-            width: '100%', 
+        <canvas
+          ref={canvasRef}
+          style={{
+            width: '100%',
             height: '300px',
             backgroundColor: '#f5f5f5',
             borderRadius: '4px',
             display: 'block',
             position: 'relative'
-          }} 
+          }}
         />
       </Box>
 
@@ -273,4 +273,4 @@ export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
       </Box>
     </Box>
   );
-} 
+}

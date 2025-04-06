@@ -15,18 +15,18 @@ export default function AudioPlayer() {
   } = useAudioPlayer();
 
   return (
-    <Paper elevation={3} sx={{ 
+    <Paper elevation={3} sx={{
       p: 2,
-      width: '100%', 
-      height: '100%', 
+      width: '100%',
+      height: '100%',
       borderRadius: 0,
       display: 'flex',
       flexDirection: 'column',
       boxSizing: 'border-box',
       overflow: 'hidden'
     }}>
-      <Box sx={{ 
-        display: 'flex', 
+      <Box sx={{
+        display: 'flex',
         flexDirection: 'column',
         gap: 2,
         height: '100%',
@@ -34,8 +34,8 @@ export default function AudioPlayer() {
         boxSizing: 'border-box',
         overflow: 'hidden'
       }}>
-        <Box sx={{ 
-          display: 'flex', 
+        <Box sx={{
+          display: 'flex',
           gap: 2,
           alignItems: 'center',
           width: '100%',
@@ -43,8 +43,8 @@ export default function AudioPlayer() {
           overflow: 'hidden',
           flexShrink: 0
         }}>
-          <Box sx={{ 
-            display: 'flex', 
+          <Box sx={{
+            display: 'flex',
             gap: 2,
             alignItems: 'center',
             minWidth: '300px',
@@ -73,31 +73,31 @@ export default function AudioPlayer() {
             </label>
           </Box>
 
-          <Box sx={{ 
+          <Box sx={{
             flex: 1,
             minWidth: 0
           }}>
-            <TempoControl 
-              tempo={globalTempo} 
-              onChange={handleTempoChange} 
+            <TempoControl
+              tempo={globalTempo}
+              onChange={handleTempoChange}
             />
           </Box>
         </Box>
 
-        <Box sx={{ 
-          flex: 1, 
+        <Box sx={{
+          flex: 1,
           overflow: 'auto',
           width: '100%',
           boxSizing: 'border-box',
           minHeight: 0  // Allow flex container to shrink
         }}>
-          <TrackList 
-            tracks={tracks} 
-            onPlayPause={handlePlayPause} 
-            onVolumeChange={handleVolumeChange} 
+          <TrackList
+            tracks={tracks}
+            onPlayPause={handlePlayPause}
+            onVolumeChange={handleVolumeChange}
           />
         </Box>
       </Box>
     </Paper>
   );
-} 
+}
