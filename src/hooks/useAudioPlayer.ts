@@ -291,7 +291,7 @@ export function useAudioPlayer() {
     // Use aubio.js for beat detection with optimized parameters
     const { Tempo } = await aubio();
     const tempo = new Tempo(2048, 512, sampleRate);  // Larger buffer size for better accuracy
-    let beats: { time: number; confidence: number; }[] = [];
+    let detectedBeats: { time: number; confidence: number; }[] = [];
     let totalFrames = 0;
     
     // Create a buffer for processing
@@ -310,97 +310,69 @@ export function useAudioPlayer() {
       const confidence = tempo.do(processBuffer);
       if (confidence !== 0) {
         const beatTimeMs = (totalFrames / sampleRate) * 1000;
-        beats.push({
+        detectedBeats.push({
           time: Math.round(beatTimeMs),
           confidence: confidence
         });
       }
       totalFrames += hopSize;
     }
-    console.log(beats);
+
     const bpm = tempo.getBpm();
     console.log('Detected BPM:', bpm);
-    
-    // Adjust BPM to standard range and refine beat times
+
+    // Adjust BPM to standard range
     let adjustedBpm = bpm;
     if (adjustedBpm < 90) adjustedBpm *= 2;
     if (adjustedBpm > 180) adjustedBpm /= 2;
 
-    // Interpolate missing beats
-    if (beats.length > 1) {
-      const interpolatedBeats: { time: number; confidence: number; }[] = [];
-      const expectedInterval = (60000 / adjustedBpm); // Expected time between beats in ms
-      const minBeatDistance = expectedInterval * 0.3; // Minimum distance between beats (30% of expected interval)
+    // Fit regular grid based on confidence-weighted beats
+    const beatInterval = (60000 / adjustedBpm); // ms between beats at the adjusted BPM
 
-      // First, interpolate from start (0ms) to first beat
-      const firstBeat = beats[0].time;
-      if (firstBeat > expectedInterval) {
-        const numMissingBeats = Math.round(firstBeat / expectedInterval);
-        const startInterval = firstBeat / (numMissingBeats + 1);
+    // Find optimal grid offset by trying different starting points
+    const durationMs = (buffer.duration * 1000);
+    const numBeats = Math.floor(durationMs / beatInterval);
 
-        // Add beats before zero if needed
-        let currentTime = 0;
-        while (currentTime < firstBeat) {
-          interpolatedBeats.push({
-            time: Math.round(currentTime),
-            confidence: 0.5 // Lower confidence for interpolated beats
-          });
-          currentTime += startInterval;
+    // Try different offsets within one beat interval to find best alignment
+    const numTestPoints = 20;
+    let gridOffset = 0;
+    let bestScore = -Infinity;
+
+    for (let i = 0; i < numTestPoints; i++) {
+      const testOffset = (beatInterval * i) / numTestPoints;
+      let score = 0;
+
+      // For each potential grid point, find nearby detected beats and score based on confidence
+      for (let beatIndex = 0; beatIndex < numBeats; beatIndex++) {
+        const gridTime = testOffset + (beatIndex * beatInterval);
+
+        // Find detected beats within 100ms of this grid point
+        const nearbyBeats = detectedBeats.filter(beat =>
+          Math.abs(beat.time - gridTime) < 100
+        );
+
+        // Score based on confidence and distance
+        for (const beat of nearbyBeats) {
+          const distance = Math.abs(beat.time - gridTime);
+          const distanceWeight = 1 - (distance / 100); // Linear falloff with distance
+          score += beat.confidence * distanceWeight;
         }
       }
 
-      // Then handle the rest of the beats
-      for (let i = 0; i < beats.length - 1; i++) {
-        const currentBeat = beats[i];
-        const nextBeat = beats[i + 1];
-        const gap = nextBeat.time - currentBeat.time;
-
-        // If the gap is significantly larger than expected (1.5x the expected interval)
-        if (gap > expectedInterval * 1.5) {
-          // Calculate how many beats should be in this gap
-          const numMissingBeats = Math.round(gap / expectedInterval) - 1;
-
-          // Add the current beat
-          interpolatedBeats.push(currentBeat);
-
-          // Calculate the actual interval to use for interpolation
-          const actualInterval = (nextBeat.time - currentBeat.time) / (numMissingBeats + 1);
-
-          // Interpolate the missing beats
-          for (let j = 1; j <= numMissingBeats; j++) {
-            const interpolatedTime = currentBeat.time + (j * actualInterval);
-
-            // Only add the beat if it's not too close to the previous or next beat
-            const prevBeat = interpolatedBeats[interpolatedBeats.length - 1];
-            if (interpolatedTime - prevBeat.time >= minBeatDistance &&
-                nextBeat.time - interpolatedTime >= minBeatDistance) {
-              interpolatedBeats.push({
-                time: Math.round(interpolatedTime),
-                confidence: 0.5 // Lower confidence for interpolated beats
-              });
-            }
-          }
-        } else {
-          // For small gaps, only add the beat if it's not too close to the previous beat
-          if (i === 0 || currentBeat.time - interpolatedBeats[interpolatedBeats.length - 1].time >= minBeatDistance) {
-            interpolatedBeats.push(currentBeat);
-          }
-        }
+      if (score > bestScore) {
+        bestScore = score;
+        gridOffset = testOffset;
       }
-
-      // Add the last beat if it's not too close to the previous one
-      const lastBeat = beats[beats.length - 1];
-      if (interpolatedBeats.length === 0 ||
-          lastBeat.time - interpolatedBeats[interpolatedBeats.length - 1].time >= minBeatDistance) {
-        interpolatedBeats.push(lastBeat);
-      }
-
-      // Replace original beats with interpolated ones
-      beats = interpolatedBeats;
     }
 
-    // Extract just the times for the existing logic
-    const beatTimes = beats.map(beat => beat.time);
+    // Generate final regular grid with optimal offset
+    const beatTimes: number[] = [];
+    for (let i = 0; i < numBeats; i++) {
+      const beatTime = Math.round(gridOffset + (i * beatInterval));
+      if (beatTime < durationMs) { // Only add beats within audio duration
+        beatTimes.push(beatTime);
+      }
+    }
 
     // === Estimate Downbeat Offset (based on alignment strength) ===
     const getOffsetScore = (offset: number) => {
