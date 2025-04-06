@@ -374,22 +374,123 @@ export function useAudioPlayer() {
       }
     }
 
-    // === Estimate Downbeat Offset (based on alignment strength) ===
+    // === Estimate Downbeat Offset using confidence scores ===
     const getOffsetScore = (offset: number) => {
       let score = 0;
+      let totalConfidence = 0;
+      let patternScore = 0;
+      let consistencyScore = 0;
+
+      // Look at groups of 4 beats starting at the offset
       for (let i = offset; i < beatTimes.length - 4; i += 4) {
-        const strength = beatTimes[i + 1] - beatTimes[i]; // use spacing as proxy
-        score += strength;
+        const barBeats: number[] = [];
+        const barConfidences: number[] = [];
+
+        // Analyze all 4 beats in this bar
+        for (let j = 0; j < 4; j++) {
+          const gridTime = beatTimes[i + j];
+          const nearbyBeats = detectedBeats.filter(beat =>
+            Math.abs(beat.time - gridTime) < 100
+          );
+
+          let beatScore = 0;
+          let maxConfidence = 0;
+
+          for (const beat of nearbyBeats) {
+            const distance = Math.abs(beat.time - gridTime);
+            const distanceWeight = 1 - (distance / 100);
+            const weightedConfidence = beat.confidence * distanceWeight;
+            beatScore += weightedConfidence;
+            maxConfidence = Math.max(maxConfidence, beat.confidence);
+          }
+
+          barBeats.push(beatScore);
+          barConfidences.push(maxConfidence);
+        }
+
+        // Score based on common rhythm patterns (1-2-3-4 emphasis)
+        const commonPatterns = [
+          [1.0, 0.5, 0.7, 0.5],  // Standard 4/4
+          [1.0, 0.4, 0.8, 0.4],  // Common rock/pop
+          [1.0, 0.3, 0.6, 0.3],  // Heavy downbeat
+        ];
+
+        // Normalize bar beats for pattern matching
+        const maxBeat = Math.max(...barBeats);
+        if (maxBeat > 0) {
+          const normalizedBeats = barBeats.map(b => b / maxBeat);
+
+          // Find best matching pattern
+          for (const pattern of commonPatterns) {
+            let patternMatch = 0;
+            for (let j = 0; j < 4; j++) {
+              patternMatch += 1 - Math.abs(normalizedBeats[j] - pattern[j]);
+            }
+            patternScore += patternMatch;
+          }
+        }
+
+        // Score based on downbeat strength
+        const downbeatStrength = barBeats[0];
+        const otherBeatsAvg = (barBeats[1] + barBeats[2] + barBeats[3]) / 3;
+        if (downbeatStrength > otherBeatsAvg) {
+          score += (downbeatStrength - otherBeatsAvg) * 2;
+        }
+
+        // Score based on confidence consistency
+        const avgConfidence = barConfidences.reduce((a, b) => a + b, 0) / 4;
+        if (barConfidences[0] > avgConfidence) {
+          consistencyScore += barConfidences[0] - avgConfidence;
+        }
+
+        totalConfidence += barConfidences[0];
       }
-      return score;
+
+      // Combine all scoring factors with weights
+      const finalScore = score * 0.4 +
+                        patternScore * 0.3 +
+                        consistencyScore * 0.2 +
+                        totalConfidence * 0.1;
+
+      return finalScore;
     };
 
+    // Cache offset scores
     const offsets = [0, 1, 2, 3];
-    const bestOffset = offsets.reduce((best, current) =>
-      getOffsetScore(current) > getOffsetScore(best) ? current : best
-    , 0);
+    const offsetScores = offsets.map(offset => ({
+      offset,
+      score: getOffsetScore(offset)
+    }));
 
-    console.log('Best downbeat offset:', bestOffset);
+    // Sort by score and get top candidates
+    const sortedOffsets = offsetScores
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 2);
+
+    // If top two scores are close, use additional factors to break tie
+    const bestOffset = sortedOffsets[0].score > sortedOffsets[1].score * 1.2
+      ? sortedOffsets[0].offset
+      : offsets.reduce((best, current) => {
+          // Additional tiebreaker: check consistency across larger phrases
+          const checkLargerPhrase = (offset: number) => {
+            let score = 0;
+            // Check 8-beat and 16-beat patterns
+            for (let i = offset; i < beatTimes.length - 16; i += 8) {
+              const beatTime = beatTimes[i];
+              const nearbyBeats = detectedBeats.filter(beat =>
+                Math.abs(beat.time - beatTime) < 100
+              );
+              score += nearbyBeats.reduce((sum, beat) => sum + beat.confidence, 0);
+            }
+            return score;
+          };
+
+          return checkLargerPhrase(current) > checkLargerPhrase(best)
+            ? current
+            : best;
+        }, sortedOffsets[0].offset);
+
+    console.log('Best downbeat offset:', bestOffset, 'Scores:', offsetScores);
 
     // Group beats into 32-beat phrases
     const phrases: {startTime: number, endTime: number}[] = [];
