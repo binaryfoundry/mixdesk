@@ -33,7 +33,6 @@ export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
     ctx.setTransform(1, 0, 0, 1, 0, 0);  // Reset transform matrix
     ctx.setLineDash([]);  // Reset line dash
     ctx.lineWidth = 1;  // Reset line width
-    ctx.strokeStyle = '#4a9eff';  // Reset stroke style
 
     if (!track.audioBuffer) {
       // Draw loading state
@@ -71,9 +70,11 @@ export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
     // Avoid division by 0
     if (visibleMax === 0) visibleMax = 1;
 
-    // Draw the normalized waveform
-    ctx.beginPath();
+    // Calculate the playback position in pixels
+    const playbackPosition = track.currentTime / track.duration;
+    const playbackPixel = Math.floor(((playbackPosition * data.length - visibleStart) / visibleSamples) * canvas.width);
 
+    // Draw the normalized waveform in two parts - played and unplayed
     for (let i = 0; i < canvas.width; i++) {
       let max = 0;
 
@@ -89,11 +90,13 @@ export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
       const height = normalized * amp * 2;
       const y = amp - height / 2;
 
+      // Draw the line segment in the appropriate color based on playback position
+      ctx.beginPath();
+      ctx.strokeStyle = i <= playbackPixel ? '#2a7edf' : '#4a9eff';
       ctx.moveTo(i, y);
       ctx.lineTo(i, y + height);
+      ctx.stroke();
     }
-
-    ctx.stroke();
 
     // Draw beat markers
     if (track.beats && track.beats.length > 0) {
@@ -136,7 +139,7 @@ export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
         }
       }
     }
-  }, [track.audioBuffer, track.beats, track.duration, track.downbeatOffset, zoom, offset]);
+  }, [track.audioBuffer, track.beats, track.duration, track.downbeatOffset, track.currentTime, zoom, offset]);
 
   useEffect(() => {
     drawWaveform();

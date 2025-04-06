@@ -34,6 +34,9 @@ export function useAudioPlayer() {
   const [activeTrackId, setActiveTrackId] = useState<string | null>(null);
   const [globalTempo, setGlobalTempo] = useState(120);
   const timeUpdateIntervalRef = useRef<number | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
+  const startTimeRef = useRef<number>(0);
+  const startOffsetRef = useRef<number>(0);
 
   // Helper function to update a specific track
   const updateTrack = (trackId: string, updates: Partial<Track>) => {
@@ -51,22 +54,35 @@ export function useAudioPlayer() {
     if (activeTrackId) {
       const track = tracks.find(t => t.id === activeTrackId);
       if (track?.isPlaying && track.sourceNode) {
-        const startTime = track.audioContext.currentTime || 0;
-        const startOffset = track.currentTime;
-
-        timeUpdateIntervalRef.current = window.setInterval(() => {
-          const elapsed = (track.audioContext.currentTime || 0) - startTime;
-          const newTime = startOffset + elapsed;
+        const updateTime = () => {
+          const elapsed = (track.audioContext.currentTime || 0) - startTimeRef.current;
+          const newTime = startOffsetRef.current + elapsed;
 
           if (isFinite(newTime) && newTime >= 0 && newTime <= track.duration) {
             updateTrack(activeTrackId, { currentTime: newTime });
+            animationFrameRef.current = requestAnimationFrame(updateTime);
           }
-        }, 100);
-      } else if (timeUpdateIntervalRef.current) {
-        window.clearInterval(timeUpdateIntervalRef.current);
+        };
+
+        animationFrameRef.current = requestAnimationFrame(updateTime);
+
+        return () => {
+          if (animationFrameRef.current) {
+            cancelAnimationFrame(animationFrameRef.current);
+          }
+        };
       }
     }
   }, [activeTrackId, tracks]);
+
+  // Clean up animation frame on unmount
+  useEffect(() => {
+    return () => {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+    };
+  }, []);
 
   const initAudio = async () => {
     try {
@@ -175,9 +191,10 @@ export function useAudioPlayer() {
 
       if (track.isPlaying) {
         track.sourceNode?.stop();
-        if (timeUpdateIntervalRef.current) {
-          window.clearInterval(timeUpdateIntervalRef.current);
+        if (animationFrameRef.current) {
+          cancelAnimationFrame(animationFrameRef.current);
         }
+        updateTrack(trackId, { isPlaying: false });
       } else {
         const validCurrentTime = isFinite(track.currentTime) ? track.currentTime : 0;
 
@@ -203,6 +220,10 @@ export function useAudioPlayer() {
 
           const rate = globalTempo / track.originalTempo;
           sourceNode.playbackRate.value = rate;
+          
+          // Set the start time and offset right before we start playing
+          startTimeRef.current = track.audioContext.currentTime;
+          startOffsetRef.current = validCurrentTime;
           sourceNode.start(0, validCurrentTime);
 
           updateTrack(trackId, {
