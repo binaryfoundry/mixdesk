@@ -41,9 +41,9 @@ export function useAudioPlayer() {
   const startTimeRefs = useRef<Map<string, number>>(new Map());
   const startOffsetRefs = useRef<Map<string, number>>(new Map());
   const metronomeContextRef = useRef<AudioContext | null>(null);
+  const metronomeNodeRef = useRef<AudioWorkletNode | null>(null);
   const nextBeatTimeRef = useRef<number>(0);
   const beatCountRef = useRef<number>(0);
-  const metronomeSchedulerRef = useRef<number | null>(null);
   const currentTempoRef = useRef<number>(120);
 
   // Helper function to adjust playback rate and pitch
@@ -104,58 +104,59 @@ export function useAudioPlayer() {
 
   // Initialize metronome audio context
   useEffect(() => {
-    metronomeContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
-    nextBeatTimeRef.current = metronomeContextRef.current.currentTime;
-    currentTempoRef.current = globalTempo;
-    scheduleBeats();
+    const initMetronome = async () => {
+      try {
+        const context = new (window.AudioContext || (window as any).webkitAudioContext)();
+        await context.audioWorklet.addModule('/audio-worklet/MetronomeProcessor.js');
+        
+        const metronomeNode = new AudioWorkletNode(context, 'metronome-processor');
+        metronomeNode.connect(context.destination);
+        
+        metronomeNode.port.onmessage = (event) => {
+          if (event.data.type === 'beat') {
+            const beatEvent = new CustomEvent(METRONOME_BEAT_EVENT, {
+              detail: {
+                beatNumber: event.data.beatNumber,
+                time: event.data.time,
+                isDownbeat: event.data.beatNumber === 1
+              }
+            });
+            metronomeEmitter.dispatchEvent(beatEvent);
+          }
+        };
+        
+        metronomeContextRef.current = context;
+        metronomeNodeRef.current = metronomeNode;
+        currentTempoRef.current = globalTempo;
+        
+        // Start the metronome
+        metronomeNode.port.postMessage({ type: 'start' });
+      } catch (error) {
+        console.error('Error initializing metronome:', error);
+      }
+    };
+
+    initMetronome();
 
     return () => {
-      if (metronomeSchedulerRef.current) {
-        clearTimeout(metronomeSchedulerRef.current);
+      if (metronomeNodeRef.current) {
+        metronomeNodeRef.current.port.postMessage({ type: 'stop' });
+        metronomeNodeRef.current.disconnect();
       }
       metronomeContextRef.current?.close();
     };
   }, []);
 
-  // Update currentTempoRef when globalTempo changes
+  // Update tempo when globalTempo changes
   useEffect(() => {
+    if (metronomeNodeRef.current) {
+      metronomeNodeRef.current.port.postMessage({
+        type: 'tempo',
+        tempo: globalTempo
+      });
+    }
     currentTempoRef.current = globalTempo;
   }, [globalTempo]);
-
-  // Schedule upcoming metronome beats
-  const scheduleBeats = () => {
-    const lookaheadMs = 25.0;
-    const scheduleAheadTime = 0.1;
-    
-    const context = metronomeContextRef.current;
-    if (!context) return;
-
-    const currentTime = context.currentTime;
-    
-    // Only schedule the next beat if we're close enough to it
-    if (nextBeatTimeRef.current < currentTime + scheduleAheadTime) {
-      const beatNumber = beatCountRef.current + 1;
-
-      // Dispatch beat event
-      const beatEvent = new CustomEvent(METRONOME_BEAT_EVENT, {
-        detail: {
-          beatNumber,
-          time: nextBeatTimeRef.current,
-          isDownbeat: beatNumber === 1
-        }
-      });
-      metronomeEmitter.dispatchEvent(beatEvent);
-      
-      beatCountRef.current = (beatCountRef.current + 1) % 4;
-      
-      // Calculate next beat time using current tempo from ref
-      const secondsPerBeat = 60.0 / currentTempoRef.current;
-      nextBeatTimeRef.current = currentTime + secondsPerBeat;
-    }
-
-    // Always schedule the next check
-    metronomeSchedulerRef.current = window.setTimeout(scheduleBeats, lookaheadMs);
-  };
 
   const initAudio = async () => {
     try {
