@@ -122,6 +122,35 @@ export function useAudioPlayer() {
     }
   };
 
+  const initAudioProcessing = async (track: Track) => {
+    try {
+      // Create source node
+      const sourceNode = track.audioContext.createBufferSource();
+      sourceNode.buffer = track.audioBuffer;
+
+      // Initialize stretch node
+      const stretchNode = await SignalsmithStretch(track.audioContext);
+      const semitones = -12 * Math.log2(globalTempo / track.originalTempo);
+      stretchNode.schedule({ rate: 1.0, semitones: semitones });
+      stretchNode.start();
+
+      // Connect the audio processing chain
+      sourceNode.connect(stretchNode);
+      if (track.gainNode) {
+        stretchNode.connect(track.gainNode);
+      }
+
+      // Set the playback rate
+      const rate = globalTempo / track.originalTempo;
+      sourceNode.playbackRate.value = rate;
+
+      return { sourceNode, stretchNode };
+    } catch (error) {
+      console.error('Error initializing audio processing:', error);
+      return null;
+    }
+  };
+
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
@@ -138,45 +167,47 @@ export function useAudioPlayer() {
       const arrayBuffer = await file.arrayBuffer();
       const audioBuffer = await audioSetup.audioContext.decodeAudioData(arrayBuffer);
       if (audioBuffer) {
-        const sourceNode = audioSetup.audioContext.createBufferSource();
-        if (sourceNode) {
-          sourceNode.buffer = audioBuffer;
+        const newTrack: Track = {
+          id: crypto.randomUUID(),
+          file,
+          metadata: trackMetadata,
+          audioContext: audioSetup.audioContext,
+          audioBuffer: audioBuffer,
+          sourceNode: null,
+          gainNode: audioSetup.gainNode,
+          stretchNode: null,
+          beats: [],
+          phrases: [],
+          isPlaying: false,
+          currentTime: 0,
+          duration: audioBuffer.duration,
+          volume: 1,
+          tempo: 120,
+          originalTempo: trackMetadata.bpm || 120,
+          downbeatOffset: 0
+        };
 
-          const newTrack: Track = {
-            id: crypto.randomUUID(),
-            file,
-            metadata: trackMetadata,
-            audioContext: audioSetup.audioContext,
-            audioBuffer: audioBuffer,
-            sourceNode,
-            gainNode: audioSetup.gainNode,
-            stretchNode: null,
-            beats: [],
-            phrases: [],
-            isPlaying: false,
-            currentTime: 0,
-            duration: audioBuffer.duration,
-            volume: 1,
-            tempo: 120,
-            originalTempo: trackMetadata.bpm || 120,
-            downbeatOffset: 0
-          };
-
-          if (newTrack.gainNode) {
-            newTrack.gainNode.gain.value = newTrack.volume;
-          }
-
-          detectBeats(audioBuffer).then(({ beatTimes, phrases, bpm, downbeatOffset }) => {
-            updateTrack(newTrack.id, {
-              originalTempo: bpm,
-              beats: beatTimes,
-              phrases,
-              downbeatOffset
-            });
-          });
-
-          setTracks(prevTracks => [...prevTracks, newTrack]);
+        // Initialize audio processing
+        const processing = await initAudioProcessing(newTrack);
+        if (processing) {
+          newTrack.sourceNode = processing.sourceNode;
+          newTrack.stretchNode = processing.stretchNode;
         }
+
+        if (newTrack.gainNode) {
+          newTrack.gainNode.gain.value = newTrack.volume;
+        }
+
+        detectBeats(audioBuffer).then(({ beatTimes, phrases, bpm, downbeatOffset }) => {
+          updateTrack(newTrack.id, {
+            originalTempo: bpm,
+            beats: beatTimes,
+            phrases,
+            downbeatOffset
+          });
+        });
+
+        setTracks(prevTracks => [...prevTracks, newTrack]);
       }
     }
   };
@@ -199,41 +230,22 @@ export function useAudioPlayer() {
         
         // If we're seeking to a new position, start playing from there
         if (track.currentTime > 0) {
-          const arrayBuffer = await track.file.arrayBuffer();
-          const audioBuffer = await track.audioContext.decodeAudioData(arrayBuffer);
+          // Create a new source node
           const sourceNode = track.audioContext.createBufferSource();
+          sourceNode.buffer = track.audioBuffer;
+          sourceNode.connect(track.stretchNode!);
+          sourceNode.playbackRate.value = globalTempo / track.originalTempo;
 
-          if (sourceNode) {
-            sourceNode.buffer = audioBuffer;
-            const stretchNode = await SignalsmithStretch(track.audioContext);
-            const semitones = -12 * Math.log2(globalTempo / track.originalTempo);
-            stretchNode.schedule({ rate: 1.0, semitones: semitones });
-            stretchNode.start();
+          // Start playback from the current time
+          startTimeRef.current = track.audioContext.currentTime;
+          startOffsetRef.current = track.currentTime;
+          sourceNode.start(0, track.currentTime);
 
-            sourceNode.connect(stretchNode);
-            if (track.gainNode) {
-              stretchNode.connect(track.gainNode);
-            }
-
-            if (track.gainNode) {
-              track.gainNode.gain.value = track.volume;
-            }
-
-            const rate = globalTempo / track.originalTempo;
-            sourceNode.playbackRate.value = rate;
-            
-            startTimeRef.current = track.audioContext.currentTime;
-            startOffsetRef.current = track.currentTime;
-            sourceNode.start(0, track.currentTime);
-
-            updateTrack(trackId, {
-              sourceNode,
-              stretchNode,
-              isPlaying: true
-            });
-
-            setActiveTrackId(trackId);
-          }
+          updateTrack(trackId, { 
+            sourceNode,
+            isPlaying: true 
+          });
+          setActiveTrackId(trackId);
         } else {
           // If not seeking, just pause
           updateTrack(trackId, { isPlaying: false });
@@ -241,41 +253,22 @@ export function useAudioPlayer() {
       } else {
         const validCurrentTime = isFinite(track.currentTime) ? track.currentTime : 0;
 
-        const arrayBuffer = await track.file.arrayBuffer();
-        const audioBuffer = await track.audioContext.decodeAudioData(arrayBuffer);
+        // Create a new source node
         const sourceNode = track.audioContext.createBufferSource();
+        sourceNode.buffer = track.audioBuffer;
+        sourceNode.connect(track.stretchNode!);
+        sourceNode.playbackRate.value = globalTempo / track.originalTempo;
 
-        if (sourceNode) {
-          sourceNode.buffer = audioBuffer;
-          const stretchNode = await SignalsmithStretch(track.audioContext);
-          const semitones = -12 * Math.log2(globalTempo / track.originalTempo);
-          stretchNode.schedule({ rate: 1.0, semitones: semitones });
-          stretchNode.start();
+        // Start playback from the current time
+        startTimeRef.current = track.audioContext.currentTime;
+        startOffsetRef.current = validCurrentTime;
+        sourceNode.start(0, validCurrentTime);
 
-          sourceNode.connect(stretchNode);
-          if (track.gainNode) {
-            stretchNode.connect(track.gainNode);
-          }
-
-          if (track.gainNode) {
-            track.gainNode.gain.value = track.volume;
-          }
-
-          const rate = globalTempo / track.originalTempo;
-          sourceNode.playbackRate.value = rate;
-          
-          startTimeRef.current = track.audioContext.currentTime;
-          startOffsetRef.current = validCurrentTime;
-          sourceNode.start(0, validCurrentTime);
-
-          updateTrack(trackId, {
-            sourceNode,
-            stretchNode,
-            isPlaying: true
-          });
-
-          setActiveTrackId(trackId);
-        }
+        updateTrack(trackId, { 
+          sourceNode,
+          isPlaying: true 
+        });
+        setActiveTrackId(trackId);
       }
     } catch (error) {
       console.error('Error in handlePlayPause:', error);
