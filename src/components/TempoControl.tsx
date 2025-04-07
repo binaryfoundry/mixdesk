@@ -24,7 +24,7 @@ export function TempoControl({ tempo, onChange }: TempoControlProps) {
         whiteSpace: 'nowrap'
       }}>
         <Typography variant="body1">
-          Global Tempo: <span style={{ fontFamily: 'monospace', minWidth: '36px', display: 'inline-block' }}>{tempo.toFixed(1)}</span>
+          Global Tempo: {tempo.toFixed(1)}
         </Typography>
       </Box>
       <Slider
