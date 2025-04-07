@@ -43,15 +43,24 @@ export function useAudioPlayer() {
   const metronomeNodeRef = useRef<AudioWorkletNode | null>(null);
   const currentTempoRef = useRef<number>(120);
   const metronomeInitializedRef = useRef<boolean>(false);
+  const lastBeatTimeRef = useRef<number>(0);
+  const expectedNextBeatTimeRef = useRef<number>(0);
+  const lastCorrectionTimeRef = useRef<number>(0);
 
   // Helper function to adjust playback rate and pitch
   const adjustPlaybackRate = (
     sourceNode: AudioBufferSourceNode,
     stretchNode: any | null,
-    originalTempo: number
+    originalTempo: number,
+    correctionFactor: number = 1,
+    audioContext: AudioContext
   ) => {
-    const rate = globalTempo / originalTempo;
-    sourceNode.playbackRate.value = rate;
+    console.log(correctionFactor)
+    const rate = (globalTempo / originalTempo) * correctionFactor;
+    
+    // Use setValueAtTime for precise timing
+    sourceNode.playbackRate.setValueAtTime(rate, audioContext.currentTime);
+    
     if (stretchNode) {
       const semitones = -12 * Math.log2(rate);
       stretchNode.schedule({ rate, semitones });
@@ -115,11 +124,19 @@ export function useAudioPlayer() {
         
         metronomeNode.port.onmessage = (event) => {
           if (event.data.type === 'beat') {
+            const currentTime = event.data.time;
+            const beatNumber = event.data.beatNumber;
+            
+            // Calculate expected next beat time
+            const secondsPerBeat = 60.0 / currentTempoRef.current;
+            expectedNextBeatTimeRef.current = currentTime + secondsPerBeat;
+            lastBeatTimeRef.current = currentTime;
+
             const beatEvent = new CustomEvent(METRONOME_BEAT_EVENT, {
               detail: {
-                beatNumber: event.data.beatNumber,
-                time: event.data.time,
-                isDownbeat: event.data.beatNumber === 1
+                beatNumber,
+                time: currentTime,
+                isDownbeat: beatNumber === 1
               }
             });
             metronomeEmitter.dispatchEvent(beatEvent);
@@ -144,9 +161,58 @@ export function useAudioPlayer() {
         metronomeNodeRef.current.port.postMessage({ type: 'stop' });
         metronomeNodeRef.current.disconnect();
       }
-      metronomeContextRef.current?.close();
+      if (metronomeContextRef.current && metronomeContextRef.current.state !== 'closed') {
+        metronomeContextRef.current.close();
+      }
     };
   }, []);
+
+  // Handle metronome synchronization
+  useEffect(() => {
+    const handleMetronomeBeat = (event: Event) => {
+      const beatEvent = event as CustomEvent;
+      const currentTime = beatEvent.detail.time;
+      
+      // Adjust all playing tracks to stay in sync
+      tracks.forEach(track => {
+        if (track.isPlaying && track.sourceNode) {
+          const startTime = startTimeRefs.current.get(track.id);
+          const startOffset = startOffsetRefs.current.get(track.id);
+          
+          if (startTime !== undefined && startOffset !== undefined) {
+            const elapsed = currentTime - startTime;
+            const expectedPosition = startOffset + elapsed;
+            const actualPosition = track.currentTime;
+            
+            // Calculate correction factor to gradually bring the audio back in sync
+            const timeToNextBeat = expectedNextBeatTimeRef.current - currentTime;
+            const timeSinceLastCorrection = currentTime - lastCorrectionTimeRef.current;
+            
+            // More aggressive correction if we're further out of sync
+            const syncError = expectedPosition - actualPosition;
+            const correctionStrength = Math.min(1, Math.abs(syncError) * 2);
+            
+            // Calculate correction factor with smoothing
+            const correctionFactor = 1 + (syncError / timeToNextBeat) * correctionStrength;
+            
+            // Apply correction with exponential smoothing
+            const smoothingFactor = 0.3;
+            const smoothedCorrection = 1 + (correctionFactor - 1) * smoothingFactor;
+            
+            // Adjust the playback rate with the smoothed correction
+            adjustPlaybackRate(track.sourceNode, track.stretchNode, track.originalTempo, smoothedCorrection, track.audioContext);
+            
+            lastCorrectionTimeRef.current = currentTime;
+          }
+        }
+      });
+    };
+
+    metronomeEmitter.addEventListener(METRONOME_BEAT_EVENT, handleMetronomeBeat);
+    return () => {
+      metronomeEmitter.removeEventListener(METRONOME_BEAT_EVENT, handleMetronomeBeat);
+    };
+  }, [tracks]);
 
   // Update tempo when globalTempo changes
   useEffect(() => {
@@ -204,7 +270,7 @@ export function useAudioPlayer() {
 
       // Initialize stretch node
       const stretchNode = await SignalsmithStretch(track.audioContext);
-      adjustPlaybackRate(sourceNode, stretchNode, track.originalTempo);
+      adjustPlaybackRate(sourceNode, stretchNode, track.originalTempo, 1, track.audioContext);
       stretchNode.start();
 
       // Connect the audio processing chain
@@ -304,7 +370,7 @@ export function useAudioPlayer() {
           const sourceNode = track.audioContext.createBufferSource();
           sourceNode.buffer = track.audioBuffer;
           sourceNode.connect(track.stretchNode!);
-          adjustPlaybackRate(sourceNode, track.stretchNode, track.originalTempo);
+          adjustPlaybackRate(sourceNode, track.stretchNode, track.originalTempo, 1, track.audioContext);
 
           // Start playback from the current time, synchronized with the metronome
           const validCurrentTime = isFinite(track.currentTime) ? track.currentTime : 0;
@@ -344,7 +410,7 @@ export function useAudioPlayer() {
     // Update track playback rates
     tracks.forEach(track => {
       if (track.sourceNode) {
-        adjustPlaybackRate(track.sourceNode, track.stretchNode, track.originalTempo);
+        adjustPlaybackRate(track.sourceNode, track.stretchNode, track.originalTempo, 1, track.audioContext);
       }
       updateTrack(track.id, { tempo: newTempo });
     });
