@@ -61,15 +61,15 @@ export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
     const visibleStart = Math.floor(offset * (data.length - visibleSamples));
     const visibleEnd = Math.min(data.length, visibleStart + visibleSamples);
 
-    // Find the max amplitude in the visible window
-    let visibleMax = 0;
-    for (let i = visibleStart; i < visibleEnd; i++) {
+    // Find the global max amplitude
+    let globalMax = 0;
+    for (let i = 0; i < data.length; i++) {
       const absValue = Math.abs(data[i]);
-      if (absValue > visibleMax) visibleMax = absValue;
+      if (absValue > globalMax) globalMax = absValue;
     }
 
     // Avoid division by 0
-    if (visibleMax === 0) visibleMax = 1;
+    if (globalMax === 0) globalMax = 1;
 
     // Calculate the playback position in pixels
     const playbackPosition = track.currentTime / track.duration;
@@ -87,7 +87,7 @@ export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
         if (absValue > max) max = absValue;
       }
 
-      const normalized = max / visibleMax; // Normalize to [0, 1] based on visible window
+      const normalized = max / globalMax; // Normalize to [0, 1] based on global maximum
       const height = normalized * amp * 2;
       const y = amp - height / 2;
 
