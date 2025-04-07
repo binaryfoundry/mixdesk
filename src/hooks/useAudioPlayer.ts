@@ -46,6 +46,20 @@ export function useAudioPlayer() {
   const metronomeSchedulerRef = useRef<number | null>(null);
   const currentTempoRef = useRef<number>(120);
 
+  // Helper function to adjust playback rate and pitch
+  const adjustPlaybackRate = (
+    sourceNode: AudioBufferSourceNode,
+    stretchNode: any | null,
+    originalTempo: number
+  ) => {
+    const rate = globalTempo / originalTempo;
+    sourceNode.playbackRate.value = rate;
+    if (stretchNode) {
+      const semitones = -12 * Math.log2(rate);
+      stretchNode.schedule({ rate, semitones });
+    }
+  };
+
   // Helper function to update a specific track
   const updateTrack = (trackId: string, updates: Partial<Track>) => {
     setTracks(prevTracks =>
@@ -186,14 +200,9 @@ export function useAudioPlayer() {
       const sourceNode = track.audioContext.createBufferSource();
       sourceNode.buffer = track.audioBuffer;
 
-      // Set the playback rate
-      const rate = globalTempo / track.originalTempo;
-      sourceNode.playbackRate.value = rate;
-
       // Initialize stretch node
       const stretchNode = await SignalsmithStretch(track.audioContext);
-      const semitones = -12 * Math.log2(rate);
-      stretchNode.schedule({ rate: rate, semitones: semitones });
+      adjustPlaybackRate(sourceNode, stretchNode, track.originalTempo);
       stretchNode.start();
 
       // Connect the audio processing chain
@@ -201,7 +210,6 @@ export function useAudioPlayer() {
       if (track.gainNode) {
         stretchNode.connect(track.gainNode);
       }
-
 
       return { sourceNode, stretchNode };
     } catch (error) {
@@ -290,7 +298,7 @@ export function useAudioPlayer() {
           const sourceNode = track.audioContext.createBufferSource();
           sourceNode.buffer = track.audioBuffer;
           sourceNode.connect(track.stretchNode!);
-          sourceNode.playbackRate.value = globalTempo / track.originalTempo;
+          adjustPlaybackRate(sourceNode, track.stretchNode, track.originalTempo);
 
           // Start playback from the current time
           startTimeRefs.current.set(track.id, track.audioContext.currentTime);
@@ -312,7 +320,7 @@ export function useAudioPlayer() {
         const sourceNode = track.audioContext.createBufferSource();
         sourceNode.buffer = track.audioBuffer;
         sourceNode.connect(track.stretchNode!);
-        sourceNode.playbackRate.value = globalTempo / track.originalTempo;
+        adjustPlaybackRate(sourceNode, track.stretchNode, track.originalTempo);
 
         // Start playback from the current time
         startTimeRefs.current.set(track.id, track.audioContext.currentTime);
@@ -346,13 +354,7 @@ export function useAudioPlayer() {
     // Update track playback rates
     tracks.forEach(track => {
       if (track.sourceNode) {
-        const rate = newTempo / track.originalTempo;
-        track.sourceNode.playbackRate.value = rate;
-
-        if (track.stretchNode) {
-          const semitones = -12 * Math.log2(newTempo / track.originalTempo);
-          track.stretchNode.schedule({ rate: rate, semitones });
-        }
+        adjustPlaybackRate(track.sourceNode, track.stretchNode, track.originalTempo);
       }
       updateTrack(track.id, { tempo: newTempo });
     });
