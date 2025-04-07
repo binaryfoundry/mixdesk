@@ -1,22 +1,24 @@
 import { Box } from '@mui/material';
-import { Track as TrackView } from './Track';
+import { Track } from './Track';
 import { Track as TrackType } from '../hooks/useAudioPlayer';
 
 interface TrackListProps {
   tracks: TrackType[];
   onPlayPause: (trackId: string) => void;
   onVolumeChange: (trackId: string, value: number | number[]) => void;
+  metronomeEmitter: EventTarget;
 }
 
-export function TrackList({ tracks, onPlayPause, onVolumeChange }: TrackListProps) {
+export function TrackList({ tracks, onPlayPause, onVolumeChange, metronomeEmitter }: TrackListProps) {
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
       {tracks.map(track => (
-        <TrackView
+        <Track
           key={track.id}
           track={track}
           onPlayPause={onPlayPause}
           onVolumeChange={onVolumeChange}
+          metronomeEmitter={metronomeEmitter}
         />
       ))}
     </Box>

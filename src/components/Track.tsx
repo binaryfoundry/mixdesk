@@ -8,15 +8,16 @@ import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import VolumeUpIcon from '@mui/icons-material/VolumeUp';
 
 // Local imports
-import { Track as TrackType } from '../hooks/useAudioPlayer';
+import { Track as TrackType, METRONOME_BEAT_EVENT } from '../hooks/useAudioPlayer';
 
 interface TrackProps {
   track: TrackType;
   onPlayPause: (trackId: string) => void;
   onVolumeChange: (trackId: string, value: number | number[]) => void;
+  metronomeEmitter: EventTarget;
 }
 
-export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
+export function Track({ track, onPlayPause, onVolumeChange, metronomeEmitter }: TrackProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [zoom, setZoom] = useState(1);  // Zoom factor, 1 = normal, >1 = zoomed in
@@ -197,12 +198,21 @@ export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
       track.currentTime = beatTime;
 
       // If the track is playing, we need to restart playback from the new position
-      if (track.isPlaying) {
-        onPlayPause(track.id); // This will stop and restart playback at the new position
-      } else {
-        // If not playing, just update the current time
-        onPlayPause(track.id); // This will start playback from the new position
-      }
+      //if (track.isPlaying) {
+      //  onPlayPause(track.id); // This will stop and restart playback at the new position
+      //} else {
+        // If not playing, wait for the next metronome beat to start playback
+        const handleMetronomeBeat = (event: Event) => {
+          const beatEvent = event as CustomEvent;
+          // Remove the event listener after the first beat
+          metronomeEmitter.removeEventListener(METRONOME_BEAT_EVENT, handleMetronomeBeat);
+          // Start playback at the selected beat
+          onPlayPause(track.id);
+        };
+        
+        // Add event listener for the next metronome beat
+        metronomeEmitter.addEventListener(METRONOME_BEAT_EVENT, handleMetronomeBeat);
+      //}
 
       console.log('Clicked at time:', timeAtClick);
       console.log('Selected beat:', {

@@ -100,6 +100,7 @@ export default function AudioPlayer() {
             tracks={tracks}
             onPlayPause={handlePlayPause}
             onVolumeChange={handleVolumeChange}
+            metronomeEmitter={metronomeEmitter}
           />
         </Box>
       </Box>
