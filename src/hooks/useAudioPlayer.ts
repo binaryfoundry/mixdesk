@@ -191,11 +191,53 @@ export function useAudioPlayer() {
       }
 
       if (track.isPlaying) {
+        // Stop the current playback
         track.sourceNode?.stop();
         if (animationFrameRef.current) {
           cancelAnimationFrame(animationFrameRef.current);
         }
-        updateTrack(trackId, { isPlaying: false });
+        
+        // If we're seeking to a new position, start playing from there
+        if (track.currentTime > 0) {
+          const arrayBuffer = await track.file.arrayBuffer();
+          const audioBuffer = await track.audioContext.decodeAudioData(arrayBuffer);
+          const sourceNode = track.audioContext.createBufferSource();
+
+          if (sourceNode) {
+            sourceNode.buffer = audioBuffer;
+            const stretchNode = await SignalsmithStretch(track.audioContext);
+            const semitones = -12 * Math.log2(globalTempo / track.originalTempo);
+            stretchNode.schedule({ rate: 1.0, semitones: semitones });
+            stretchNode.start();
+
+            sourceNode.connect(stretchNode);
+            if (track.gainNode) {
+              stretchNode.connect(track.gainNode);
+            }
+
+            if (track.gainNode) {
+              track.gainNode.gain.value = track.volume;
+            }
+
+            const rate = globalTempo / track.originalTempo;
+            sourceNode.playbackRate.value = rate;
+            
+            startTimeRef.current = track.audioContext.currentTime;
+            startOffsetRef.current = track.currentTime;
+            sourceNode.start(0, track.currentTime);
+
+            updateTrack(trackId, {
+              sourceNode,
+              stretchNode,
+              isPlaying: true
+            });
+
+            setActiveTrackId(trackId);
+          }
+        } else {
+          // If not seeking, just pause
+          updateTrack(trackId, { isPlaying: false });
+        }
       } else {
         const validCurrentTime = isFinite(track.currentTime) ? track.currentTime : 0;
 
@@ -222,7 +264,6 @@ export function useAudioPlayer() {
           const rate = globalTempo / track.originalTempo;
           sourceNode.playbackRate.value = rate;
           
-          // Set the start time and offset right before we start playing
           startTimeRef.current = track.audioContext.currentTime;
           startOffsetRef.current = validCurrentTime;
           sourceNode.start(0, validCurrentTime);

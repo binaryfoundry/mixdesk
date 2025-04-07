@@ -185,10 +185,24 @@ export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
       // Update clicked beat index
       setClickedBeatIndex(selectedBeatIndex);
 
+      // Get the beat time
+      const beatTime = beatTimesInSeconds[selectedBeatIndex];
+
+      // Update the track's current time
+      track.currentTime = beatTime;
+
+      // If the track is playing, we need to restart playback from the new position
+      if (track.isPlaying) {
+        onPlayPause(track.id); // This will stop and restart playback at the new position
+      } else {
+        // If not playing, just update the current time
+        onPlayPause(track.id); // This will start playback from the new position
+      }
+
       console.log('Clicked at time:', timeAtClick);
       console.log('Selected beat:', {
         index: selectedBeatIndex,
-        time: beatTimesInSeconds[selectedBeatIndex],
+        time: beatTime,
         isDownbeat,
         nextBeatTime: beatTimesInSeconds[selectedBeatIndex + 1]
       });
