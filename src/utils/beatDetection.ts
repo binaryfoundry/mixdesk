@@ -221,48 +221,59 @@ function getOffsetScore(
 }
 
 async function findBestDownbeatOffset(
-  beatTimes: number[],
-  detectedBeats: DetectedBeat[]
-): Promise<number> {
-  const offsets = [0, 1, 2, 3];
-  const offsetScores: OffsetScore[] = [];
-  const OFFSET_CHUNK_SIZE = 2;
+    beatTimes: number[],
+    detectedBeats: DetectedBeat[]
+  ): Promise<number> {
+    const offsets = [0, 1, 2, 3];
+    const scores: { offset: number; score: number }[] = [];
+    const beatsPerBar = 4;
 
-  for (let i = 0; i < offsets.length; i += OFFSET_CHUNK_SIZE) {
-    await new Promise(resolve => setTimeout(resolve, 0));
-    
-    for (let j = i; j < Math.min(i + OFFSET_CHUNK_SIZE, offsets.length); j++) {
-      offsetScores.push({
-        offset: offsets[j],
-        score: getOffsetScore(offsets[j], beatTimes, detectedBeats)
-      });
+    // Helper to compute beat strengths
+    const getStrength = (time: number): number => {
+      const nearby = detectedBeats.filter(b => Math.abs(b.time - time) < 100);
+      return nearby.reduce((sum, b) => sum + b.confidence * (1 - Math.abs(b.time - time) / 100), 0);
+    };
+
+    // For each offset (0–3), evaluate based on bar accent patterns
+    for (const offset of offsets) {
+      let totalScore = 0;
+      let count = 0;
+
+      for (let i = offset; i + 3 < beatTimes.length; i += beatsPerBar) {
+        const strengths = [
+          getStrength(beatTimes[i]),     // beat 1
+          getStrength(beatTimes[i + 1]), // beat 2
+          getStrength(beatTimes[i + 2]), // beat 3
+          getStrength(beatTimes[i + 3])  // beat 4
+        ];
+
+        const total = strengths.reduce((a, b) => a + b, 0);
+        if (total === 0) continue;
+
+        const norm = strengths.map(s => s / total);
+
+        // Expect pattern: strong (1), weak (2), medium (3), weak (4)
+        const expected = [1.0, 0.4, 0.7, 0.4];
+
+        let patternMatch = 0;
+        for (let j = 0; j < 4; j++) {
+          patternMatch += 1 - Math.abs(norm[j] - expected[j]);
+        }
+
+        totalScore += patternMatch;
+        count++;
+      }
+
+      const averageScore = count > 0 ? totalScore / count : 0;
+
+      // Add small bias toward offset = 0 (common case)
+      const bias = offset === 0 ? 0.1 : 0;
+
+      scores.push({ offset, score: averageScore + bias });
     }
-  }
 
-  const sortedOffsets = offsetScores
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 2);
-
-  if (sortedOffsets[0].score > sortedOffsets[1].score * 1.2) {
-    return sortedOffsets[0].offset;
-  }
-
-  const checkLargerPhrase = (offset: number): number => {
-    let score = 0;
-    for (let i = offset; i < beatTimes.length - 16; i += 8) {
-      const beatTime = beatTimes[i];
-      const nearbyBeats = detectedBeats.filter(beat =>
-        Math.abs(beat.time - beatTime) < 100
-      );
-      score += nearbyBeats.reduce((sum, beat) => sum + beat.confidence, 0);
-    }
-    return score;
-  };
-
-  return offsets.reduce((best, current) =>
-    checkLargerPhrase(current) > checkLargerPhrase(best) ? current : best,
-    sortedOffsets[0].offset
-  );
+    scores.sort((a, b) => b.score - a.score);
+    return scores[0].offset;
 }
 
 async function detectPhrases(
