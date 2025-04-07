@@ -1,6 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
 import * as mm from 'music-metadata';
-import aubio from 'aubiojs';
 import SignalsmithStretch from 'signalsmith-stretch';
 import { detectBeats } from '../utils/beatDetection';
 

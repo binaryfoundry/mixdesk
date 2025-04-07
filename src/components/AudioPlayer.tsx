@@ -1,8 +1,11 @@
+// Material-UI imports
 import { Box, Button, Paper } from '@mui/material';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
+
+// Local imports
 import { useAudioPlayer } from '../hooks/useAudioPlayer';
-import { TrackList } from './TrackList';
 import { TempoControl } from './TempoControl';
+import { TrackList } from './TrackList';
 
 export default function AudioPlayer() {
   const {

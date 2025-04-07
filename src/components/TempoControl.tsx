@@ -1,3 +1,4 @@
+// Material-UI imports
 import { Box, Slider, Typography } from '@mui/material';
 
 interface TempoControlProps {

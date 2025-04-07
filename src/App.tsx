@@ -1,5 +1,8 @@
+// Material-UI imports
 import { Box } from '@mui/material';
 import { ThemeProvider } from '@mui/material/styles';
+
+// Local imports
 import AudioPlayer from './components/AudioPlayer';
 import { theme } from './theme';
 

@@ -1,8 +1,13 @@
+// React imports
+import { useCallback, useEffect, useRef, useState } from 'react';
+
+// Material-UI imports
 import { Box, Button, Slider, Typography } from '@mui/material';
-import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import PauseIcon from '@mui/icons-material/Pause';
+import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import VolumeUpIcon from '@mui/icons-material/VolumeUp';
-import { useEffect, useRef, useState, useCallback } from 'react';
+
+// Local imports
 import { Track as TrackType } from '../hooks/useAudioPlayer';
 
 interface TrackProps {
