@@ -14,7 +14,8 @@ export default function AudioPlayer() {
     handleFileUpload,
     handlePlayPause,
     handleVolumeChange,
-    handleTempoChange
+    handleTempoChange,
+    metronomeEmitter
   } = useAudioPlayer();
 
   return (
@@ -83,6 +84,7 @@ export default function AudioPlayer() {
             <TempoControl
               tempo={globalTempo}
               onChange={handleTempoChange}
+              metronomeEmitter={metronomeEmitter}
             />
           </Box>
         </Box>

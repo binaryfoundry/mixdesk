@@ -3,6 +3,10 @@ import * as mm from 'music-metadata';
 import SignalsmithStretch from 'signalsmith-stretch';
 import { detectBeats } from '../utils/beatDetection';
 
+// Create an event emitter for metronome beats
+const metronomeEmitter = new EventTarget();
+export const METRONOME_BEAT_EVENT = 'metronomeBeat';
+
 interface TrackMetadata {
   title: string;
   key: string;
@@ -41,6 +45,8 @@ export function useAudioPlayer() {
   const nextBeatTimeRef = useRef<number>(0);
   const beatCountRef = useRef<number>(0);
   const metronomeSchedulerRef = useRef<number | null>(null);
+  const lastTempoChangeTimeRef = useRef<number>(0);
+  const lastTempoRef = useRef<number>(120);
 
   // Helper function to update a specific track
   const updateTrack = (trackId: string, updates: Partial<Track>) => {
@@ -91,6 +97,10 @@ export function useAudioPlayer() {
   // Initialize metronome audio context
   useEffect(() => {
     metronomeContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+    // Initialize the first beat time
+    nextBeatTimeRef.current = metronomeContextRef.current.currentTime;
+    lastTempoChangeTimeRef.current = nextBeatTimeRef.current;
+    lastTempoRef.current = globalTempo;
     return () => {
       metronomeContextRef.current?.close();
     };
@@ -98,26 +108,34 @@ export function useAudioPlayer() {
 
   // Schedule upcoming metronome beats
   const scheduleBeats = () => {
-    const lookaheadMs = 25.0; // How far ahead to schedule audio (in milliseconds)
-    const scheduleAheadTime = 0.1; // How far ahead to schedule events (in seconds)
+    const lookaheadMs = 25.0;
+    const scheduleAheadTime = 0.1;
     
     const context = metronomeContextRef.current;
     if (!context) return;
 
     const currentTime = context.currentTime;
     
-    // Schedule beats until we're ahead by scheduleAheadTime
     while (nextBeatTimeRef.current < currentTime + scheduleAheadTime) {
-      // Log the beat (you can replace this with actual audio playback if needed)
-      console.log(`Beat ${beatCountRef.current + 1} scheduled at ${nextBeatTimeRef.current}`);
+      const beatNumber = beatCountRef.current + 1;
+      console.log(`Beat ${beatNumber} at ${nextBeatTimeRef.current.toFixed(3)}s`);
       
-      // Calculate time for next beat
-      const secondsPerBeat = 60.0 / globalTempo;
+      // Dispatch beat event with beat number and timing info
+      const beatEvent = new CustomEvent(METRONOME_BEAT_EVENT, {
+        detail: {
+          beatNumber,
+          time: nextBeatTimeRef.current,
+          isDownbeat: beatNumber === 1
+        }
+      });
+      metronomeEmitter.dispatchEvent(beatEvent);
+      
       beatCountRef.current = (beatCountRef.current + 1) % 4;
+      
+      const secondsPerBeat = 60.0 / globalTempo;
       nextBeatTimeRef.current += secondsPerBeat;
     }
 
-    // Schedule next check
     metronomeSchedulerRef.current = window.setTimeout(scheduleBeats, lookaheadMs);
   };
 
@@ -125,9 +143,23 @@ export function useAudioPlayer() {
   useEffect(() => {
     if (!metronomeContextRef.current) return;
 
-    // Reset timing when tempo changes
-    nextBeatTimeRef.current = metronomeContextRef.current.currentTime;
-    beatCountRef.current = 0;
+    // When tempo changes, adjust the next beat time to maintain phase
+    const context = metronomeContextRef.current;
+    const currentTime = context.currentTime;
+    
+    // Calculate how many beats have occurred since the last tempo change
+    const timeSinceLastTempoChange = currentTime - lastTempoChangeTimeRef.current;
+    const oldSecondsPerBeat = 60.0 / lastTempoRef.current;
+    const beatsElapsed = timeSinceLastTempoChange / oldSecondsPerBeat;
+    const beatFraction = beatsElapsed - Math.floor(beatsElapsed);
+    
+    // Calculate the next beat time that maintains the current phase
+    const newSecondsPerBeat = 60.0 / globalTempo;
+    nextBeatTimeRef.current = currentTime + ((1 - beatFraction) * newSecondsPerBeat);
+    
+    // Update last tempo change reference
+    lastTempoChangeTimeRef.current = currentTime;
+    lastTempoRef.current = globalTempo;
 
     // Start scheduling beats
     scheduleBeats();
@@ -362,6 +394,7 @@ export function useAudioPlayer() {
     handleFileUpload,
     handlePlayPause,
     handleVolumeChange,
-    handleTempoChange
+    handleTempoChange,
+    metronomeEmitter
   };
 }
