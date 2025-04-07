@@ -362,9 +362,9 @@ export function useAudioPlayer() {
         updateTrack(trackId, { isPlaying: false });
       } else {
         // Wait for the next metronome beat to start playback
-        const handleMetronomeBeat = (event: Event) => {
+        const handleStartOnBeat = (event: Event) => {
           const beatEvent = event as CustomEvent;
-          metronomeEmitter.removeEventListener(METRONOME_BEAT_EVENT, handleMetronomeBeat);
+          metronomeEmitter.removeEventListener(METRONOME_BEAT_EVENT, handleStartOnBeat);
 
           // Create a new source node
           const sourceNode = track.audioContext.createBufferSource();
@@ -386,7 +386,7 @@ export function useAudioPlayer() {
         };
 
         // Add event listener for the next metronome beat
-        metronomeEmitter.addEventListener(METRONOME_BEAT_EVENT, handleMetronomeBeat);
+        metronomeEmitter.addEventListener(METRONOME_BEAT_EVENT, handleStartOnBeat);
       }
     } catch (error) {
       console.error('Error in handlePlayPause:', error);
