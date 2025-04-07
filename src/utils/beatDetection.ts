@@ -56,47 +56,61 @@ async function createFilteredBuffer(buffer: AudioBuffer): Promise<Float32Array> 
   return renderedBuffer.getChannelData(0);
 }
 
-async function detectRawBeats(data: Float32Array, sampleRate: number): Promise<{ detectedBeats: DetectedBeat[]; bpm: number }> {
+async function detectRawBeats(
+  data: Float32Array,
+  sampleRate: number
+): Promise<{ detectedBeats: DetectedBeat[]; bpm: number }> {
   const { Tempo } = await aubio();
   const tempo = new Tempo(2048, 512, sampleRate);
-  let detectedBeats: DetectedBeat[] = [];
-  let totalFrames = 0;
+  const detectedBeats: DetectedBeat[] = [];
 
   const hopSize = 512;
   const bufferSize = 2048;
   const CHUNK_SIZE = 10000;
+  let totalFrames = 0;
 
-  const processChunk = async (startIndex: number): Promise<void> => {
-    return new Promise(resolve => {
-      setTimeout(() => {
-        const endIndex = Math.min(startIndex + CHUNK_SIZE, data.length - bufferSize);
-        const processBuffer = new Float32Array(bufferSize);
+  // Process audio in chunks to avoid blocking the main thread
+  for (let chunkStart = 0; chunkStart < data.length - bufferSize; chunkStart += CHUNK_SIZE) {
+    await new Promise(resolve => setTimeout(resolve, 0)); // Yield to main thread
 
-        for (let i = startIndex; i < endIndex; i += hopSize) {
-          for (let j = 0; j < bufferSize; j++) {
-            processBuffer[j] = data[i + j];
-          }
+    const chunkEnd = Math.min(chunkStart + CHUNK_SIZE, data.length - bufferSize);
+    const processBuffer = new Float32Array(bufferSize);
 
-          const confidence = tempo.do(processBuffer);
-          if (confidence !== 0) {
-            const beatTimeMs = (totalFrames / sampleRate) * 1000;
-            detectedBeats.push({
-              time: Math.round(beatTimeMs),
-              confidence
-            });
-          }
-          totalFrames += hopSize;
-        }
-        resolve();
-      }, 0);
-    });
-  };
+    // Process each hop within the current chunk
+    for (let i = chunkStart; i < chunkEnd; i += hopSize) {
+      // Copy audio data into processing buffer
+      for (let j = 0; j < bufferSize; j++) {
+        processBuffer[j] = data[i + j];
+      }
 
-  for (let i = 0; i < data.length - bufferSize; i += CHUNK_SIZE) {
-    await processChunk(i);
+      // Detect beat and calculate confidence
+      const confidence = tempo.do(processBuffer);
+      
+      // Only keep beats with sufficient confidence
+      if (confidence > 0.3) {
+        const beatTimeMs = (totalFrames / sampleRate) * 1000;
+        detectedBeats.push({
+          time: Math.round(beatTimeMs),
+          confidence
+        });
+      }
+      totalFrames += hopSize;
+    }
   }
 
-  return { detectedBeats, bpm: tempo.getBpm() };
+  // Merge very close beats (less than 200ms apart)
+  const filteredBeats: DetectedBeat[] = [];
+  for (let i = 0; i < detectedBeats.length; i++) {
+    const current = detectedBeats[i];
+    if (i === 0 || current.time - detectedBeats[i - 1].time > 200) {
+      filteredBeats.push(current);
+    }
+  }
+
+  return {
+    detectedBeats: filteredBeats,
+    bpm: tempo.getBpm()
+  };
 }
 
 async function findOptimalGridOffset(
