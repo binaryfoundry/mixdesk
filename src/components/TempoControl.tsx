@@ -10,15 +10,13 @@ interface TempoControlProps {
 }
 
 export function TempoControl({ tempo, onChange, metronomeEmitter }: TempoControlProps) {
-  const [activeBeat, setActiveBeat] = useState<number | null>(null);
+  const [currentBeat, setCurrentBeat] = useState<number>(4);
   const [isDragging, setIsDragging] = useState(false);
 
   useEffect(() => {
     const handleBeat = (event: Event) => {
       const beatEvent = event as CustomEvent;
-      setActiveBeat(beatEvent.detail.beatNumber);
-      // Reset the active beat after a short delay for the visual flash effect
-      setTimeout(() => setActiveBeat(null), 100);
+      setCurrentBeat(beatEvent.detail.beatNumber);
     };
 
     metronomeEmitter.addEventListener(METRONOME_BEAT_EVENT, handleBeat);
@@ -56,13 +54,13 @@ export function TempoControl({ tempo, onChange, metronomeEmitter }: TempoControl
                 width: 12,
                 height: 12,
                 borderRadius: '50%',
-                backgroundColor: activeBeat === beat ? '#4a9eff' : '#e0e0e0',
+                backgroundColor: beat === currentBeat ? '#4a9eff' : '#e0e0e0',
                 transition: 'background-color 0.1s ease',
-                // Make the first beat (downbeat) slightly larger
+                // Make the first beat (downbeat) slightly larger and brighter when active
                 ...(beat === 1 && {
                   width: 14,
                   height: 14,
-                  backgroundColor: activeBeat === 1 ? '#2979ff' : '#bdbdbd'
+                  backgroundColor: beat === currentBeat ? '#2979ff' : '#bdbdbd'
                 })
               }}
             />
