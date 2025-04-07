@@ -15,6 +15,11 @@ class MetronomeProcessor extends AudioWorkletProcessor {
         this.isPlaying = false;
       } else if (event.data.type === 'tempo') {
         this.tempo = event.data.tempo;
+        // Recalculate next beat time based on new tempo
+        const secondsPerBeat = 60.0 / this.tempo;
+        const timeSinceLastBeat = currentTime - this.lastBeatTime;
+        const beatsSinceLast = Math.floor(timeSinceLastBeat / secondsPerBeat);
+        this.nextBeatTime = this.lastBeatTime + (beatsSinceLast + 1) * secondsPerBeat;
       }
     };
   }
@@ -53,6 +58,7 @@ class MetronomeProcessor extends AudioWorkletProcessor {
       });
 
       // Update for next beat
+      this.lastBeatTime = this.nextBeatTime;
       this.beatCount = (this.beatCount + 1) % 4;
       this.nextBeatTime += secondsPerBeat;
     }

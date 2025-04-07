@@ -237,17 +237,7 @@ export function Track({ track, onPlayPause, onVolumeChange, metronomeEmitter }: 
       // Update the track's current time
       track.currentTime = beatTime;
 
-      // Wait for the next metronome beat to start playback
-      const handleMetronomeBeat = (event: Event) => {
-        const beatEvent = event as CustomEvent;
-        // Remove the event listener after the first beat
-        metronomeEmitter.removeEventListener(METRONOME_BEAT_EVENT, handleMetronomeBeat);
-        // Start playback at the selected beat
-        onPlayPause(track.id);
-      };
-
-      // Add event listener for the next metronome beat
-      metronomeEmitter.addEventListener(METRONOME_BEAT_EVENT, handleMetronomeBeat);
+      onPlayPause(track.id);
 
       console.log('Clicked at time:', timeAtClick);
       console.log('Selected beat:', {

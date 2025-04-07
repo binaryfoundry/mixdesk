@@ -36,14 +36,11 @@ export interface Track {
 export function useAudioPlayer() {
   const [tracks, setTracks] = useState<Track[]>([]);
   const [globalTempo, setGlobalTempo] = useState(120);
-  const timeUpdateIntervalRef = useRef<number | null>(null);
   const animationFrameRef = useRef<number | null>(null);
   const startTimeRefs = useRef<Map<string, number>>(new Map());
   const startOffsetRefs = useRef<Map<string, number>>(new Map());
   const metronomeContextRef = useRef<AudioContext | null>(null);
   const metronomeNodeRef = useRef<AudioWorkletNode | null>(null);
-  const nextBeatTimeRef = useRef<number>(0);
-  const beatCountRef = useRef<number>(0);
   const currentTempoRef = useRef<number>(120);
 
   // Helper function to adjust playback rate and pitch
@@ -292,46 +289,34 @@ export function useAudioPlayer() {
       if (track.isPlaying) {
         // Stop the current playback
         track.sourceNode?.stop();
-        
-        // If we're seeking to a new position, start playing from there
-        if (track.currentTime > 0) {
+        updateTrack(trackId, { isPlaying: false });
+      } else {
+        // Wait for the next metronome beat to start playback
+        const handleMetronomeBeat = (event: Event) => {
+          const beatEvent = event as CustomEvent;
+          metronomeEmitter.removeEventListener(METRONOME_BEAT_EVENT, handleMetronomeBeat);
+
           // Create a new source node
           const sourceNode = track.audioContext.createBufferSource();
           sourceNode.buffer = track.audioBuffer;
           sourceNode.connect(track.stretchNode!);
           adjustPlaybackRate(sourceNode, track.stretchNode, track.originalTempo);
 
-          // Start playback from the current time
-          startTimeRefs.current.set(track.id, track.audioContext.currentTime);
-          startOffsetRefs.current.set(track.id, track.currentTime);
-          sourceNode.start(0, track.currentTime);
+          // Start playback from the current time, synchronized with the metronome
+          const validCurrentTime = isFinite(track.currentTime) ? track.currentTime : 0;
+          const startTime = track.audioContext.currentTime;
+          startTimeRefs.current.set(track.id, startTime);
+          startOffsetRefs.current.set(track.id, validCurrentTime);
+          sourceNode.start(0, validCurrentTime);
 
           updateTrack(trackId, { 
             sourceNode,
             isPlaying: true 
           });
-        } else {
-          // If not seeking, just pause
-          updateTrack(trackId, { isPlaying: false });
-        }
-      } else {
-        const validCurrentTime = isFinite(track.currentTime) ? track.currentTime : 0;
+        };
 
-        // Create a new source node
-        const sourceNode = track.audioContext.createBufferSource();
-        sourceNode.buffer = track.audioBuffer;
-        sourceNode.connect(track.stretchNode!);
-        adjustPlaybackRate(sourceNode, track.stretchNode, track.originalTempo);
-
-        // Start playback from the current time
-        startTimeRefs.current.set(track.id, track.audioContext.currentTime);
-        startOffsetRefs.current.set(track.id, validCurrentTime);
-        sourceNode.start(0, validCurrentTime);
-
-        updateTrack(trackId, { 
-          sourceNode,
-          isPlaying: true 
-        });
+        // Add event listener for the next metronome beat
+        metronomeEmitter.addEventListener(METRONOME_BEAT_EVENT, handleMetronomeBeat);
       }
     } catch (error) {
       console.error('Error in handlePlayPause:', error);
