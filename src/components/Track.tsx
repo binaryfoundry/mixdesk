@@ -16,6 +16,7 @@ export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
   const [isLoading, setIsLoading] = useState(true);
   const [zoom, setZoom] = useState(1);  // Zoom factor, 1 = normal, >1 = zoomed in
   const [offset, setOffset] = useState(0);  // Horizontal offset, 0 = start, 1 = end
+  const [clickedBeatIndex, setClickedBeatIndex] = useState<number | null>(null);
 
   const drawWaveform = useCallback(() => {
     const canvas = canvasRef.current;
@@ -103,6 +104,7 @@ export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
       // Define alternating shades of grey
       const lightGrey = 'rgba(200, 200, 200, 0.0)';
       const darkGrey = 'rgba(200, 200, 200, 0.2)';
+      const highlightColor = 'rgba(255, 223, 0, 0.3)'; // Yellow highlight for clicked beat
 
       // Draw beat rectangles and downbeat lines
       for (let i = 0; i < track.beats.length - 1; i++) {
@@ -121,8 +123,12 @@ export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
 
         // Only draw if at least part of the rectangle is visible
         if (x2 > 0 && x1 < canvas.width) {
-          // Use alternating colors
-          ctx.fillStyle = i % 2 === 0 ? darkGrey : lightGrey;
+          // Use highlight color for clicked beat, otherwise use alternating colors
+          if (i === clickedBeatIndex) {
+            ctx.fillStyle = highlightColor;
+          } else {
+            ctx.fillStyle = i % 2 === 0 ? darkGrey : lightGrey;
+          }
           ctx.fillRect(x1, 0, x2 - x1, canvas.height);
 
           // Draw dashed line at the start of each bar
@@ -139,7 +145,55 @@ export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
         }
       }
     }
-  }, [track.audioBuffer, track.beats, track.duration, track.downbeatOffset, track.currentTime, zoom, offset]);
+  }, [track.audioBuffer, track.beats, track.duration, track.downbeatOffset, track.currentTime, zoom, offset, clickedBeatIndex]);
+
+  const handleCanvasClick = (event: React.MouseEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (!canvas || !track.audioBuffer) return;
+
+    // Get click position relative to canvas
+    const rect = canvas.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const clickPosition = x / canvas.width;
+
+    // Account for zoom and offset
+    const visibleSamples = track.audioBuffer.length / zoom;
+    const visibleStart = Math.floor(offset * (track.audioBuffer.length - visibleSamples));
+    
+    // Calculate the time at click position
+    const sampleAtClick = visibleStart + (visibleSamples * clickPosition);
+    const timeAtClick = sampleAtClick / track.audioBuffer.sampleRate;
+    
+    // Find nearest beat
+    if (track.beats && track.beats.length > 0) {
+      // Convert beats from milliseconds to seconds
+      const beatTimesInSeconds = track.beats.map(beat => beat / 1000);
+      
+      // Find the beat that starts before the clicked time
+      let selectedBeatIndex = 0;
+      for (let i = 0; i < beatTimesInSeconds.length; i++) {
+        if (beatTimesInSeconds[i] <= timeAtClick) {
+          selectedBeatIndex = i;
+        } else {
+          break;
+        }
+      }
+
+      // Check if this beat is a bar start (downbeat)
+      const isDownbeat = selectedBeatIndex % 4 === track.downbeatOffset;
+
+      // Update clicked beat index
+      setClickedBeatIndex(selectedBeatIndex);
+
+      console.log('Clicked at time:', timeAtClick);
+      console.log('Selected beat:', {
+        index: selectedBeatIndex,
+        time: beatTimesInSeconds[selectedBeatIndex],
+        isDownbeat,
+        nextBeatTime: beatTimesInSeconds[selectedBeatIndex + 1]
+      });
+    }
+  };
 
   useEffect(() => {
     drawWaveform();
@@ -217,6 +271,7 @@ export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
       }}>
         <canvas
           ref={canvasRef}
+          onClick={handleCanvasClick}
           style={{
             width: '100%',
             height: '300px',
