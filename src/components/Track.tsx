@@ -301,7 +301,7 @@ export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
           <Slider
             value={zoom}
             onChange={(e, v) => setZoom(v as number)}
-            min={0.1}
+            min={1.0}
             max={20}
             step={0.1}
             size="small"
