@@ -7,7 +7,17 @@ export interface BeatDetectionResult {
   downbeatOffset: number;
 }
 
-export async function detectBeats(buffer: AudioBuffer): Promise<BeatDetectionResult> {
+interface DetectedBeat {
+  time: number;
+  confidence: number;
+}
+
+interface OffsetScore {
+  offset: number;
+  score: number;
+}
+
+async function createFilteredBuffer(buffer: AudioBuffer): Promise<Float32Array> {
   const sampleRate = buffer.sampleRate;
   const numSamples = buffer.length;
 
@@ -43,20 +53,19 @@ export async function detectBeats(buffer: AudioBuffer): Promise<BeatDetectionRes
 
   // Render the filtered audio
   const renderedBuffer = await offlineCtx.startRendering();
-  const data = renderedBuffer.getChannelData(0);
+  return renderedBuffer.getChannelData(0);
+}
 
-  // Use aubio.js for beat detection with optimized parameters
+async function detectRawBeats(data: Float32Array, sampleRate: number): Promise<{ detectedBeats: DetectedBeat[]; bpm: number }> {
   const { Tempo } = await aubio();
-  const tempo = new Tempo(2048, 512, sampleRate);  // Larger buffer size for better accuracy
-  let detectedBeats: { time: number; confidence: number; }[] = [];
+  const tempo = new Tempo(2048, 512, sampleRate);
+  let detectedBeats: DetectedBeat[] = [];
   let totalFrames = 0;
 
-  // Create a buffer for processing
   const hopSize = 512;
   const bufferSize = 2048;
+  const CHUNK_SIZE = 10000;
 
-  // Process in chunks with yield to UI
-  const CHUNK_SIZE = 10000; // Process 10000 samples at a time
   const processChunk = async (startIndex: number): Promise<void> => {
     return new Promise(resolve => {
       setTimeout(() => {
@@ -64,73 +73,60 @@ export async function detectBeats(buffer: AudioBuffer): Promise<BeatDetectionRes
         const processBuffer = new Float32Array(bufferSize);
 
         for (let i = startIndex; i < endIndex; i += hopSize) {
-          // Copy data into process buffer
           for (let j = 0; j < bufferSize; j++) {
             processBuffer[j] = data[i + j];
           }
 
-          // Process this frame
           const confidence = tempo.do(processBuffer);
           if (confidence !== 0) {
             const beatTimeMs = (totalFrames / sampleRate) * 1000;
             detectedBeats.push({
               time: Math.round(beatTimeMs),
-              confidence: confidence
+              confidence
             });
           }
           totalFrames += hopSize;
         }
-
         resolve();
       }, 0);
     });
   };
 
-  // Process all chunks
   for (let i = 0; i < data.length - bufferSize; i += CHUNK_SIZE) {
     await processChunk(i);
   }
 
-  const bpm = tempo.getBpm();
-  console.log('Detected BPM:', bpm);
+  return { detectedBeats, bpm: tempo.getBpm() };
+}
 
-  // Adjust BPM to standard range
-  let adjustedBpm = bpm;
-  if (adjustedBpm < 90) adjustedBpm *= 2;
-  if (adjustedBpm > 180) adjustedBpm /= 2;
-
-  // Fit regular grid based on confidence-weighted beats
-  const beatInterval = (60000 / adjustedBpm); // ms between beats at the adjusted BPM
-  const durationMs = (buffer.duration * 1000);
+async function findOptimalGridOffset(
+  detectedBeats: DetectedBeat[],
+  adjustedBpm: number,
+  durationMs: number
+): Promise<{ gridOffset: number; beatTimes: number[] }> {
+  const beatInterval = (60000 / adjustedBpm);
   const numBeats = Math.floor(durationMs / beatInterval);
-
-  // Try different offsets within one beat interval to find best alignment
   const numTestPoints = 20;
   let gridOffset = 0;
   let bestScore = -Infinity;
 
-  // Process grid alignment in chunks
-  const GRID_CHUNK_SIZE = 5; // Process 5 test points at a time
+  const GRID_CHUNK_SIZE = 5;
   for (let i = 0; i < numTestPoints; i += GRID_CHUNK_SIZE) {
     await new Promise(resolve => setTimeout(resolve, 0));
-
+    
     for (let j = i; j < Math.min(i + GRID_CHUNK_SIZE, numTestPoints); j++) {
       const testOffset = (beatInterval * j) / numTestPoints;
       let score = 0;
 
-      // For each potential grid point, find nearby detected beats and score based on confidence
       for (let beatIndex = 0; beatIndex < numBeats; beatIndex++) {
         const gridTime = testOffset + (beatIndex * beatInterval);
-
-        // Find detected beats within 100ms of this grid point
         const nearbyBeats = detectedBeats.filter(beat =>
           Math.abs(beat.time - gridTime) < 100
         );
 
-        // Score based on confidence and distance
         for (const beat of nearbyBeats) {
           const distance = Math.abs(beat.time - gridTime);
-          const distanceWeight = 1 - (distance / 100); // Linear falloff with distance
+          const distanceWeight = 1 - (distance / 100);
           score += beat.confidence * distanceWeight;
         }
       }
@@ -142,155 +138,148 @@ export async function detectBeats(buffer: AudioBuffer): Promise<BeatDetectionRes
     }
   }
 
-  // Generate final regular grid with optimal offset
   const beatTimes: number[] = [];
   for (let i = 0; i < numBeats; i++) {
     const beatTime = Math.round(gridOffset + (i * beatInterval));
-    if (beatTime < durationMs) { // Only add beats within audio duration
+    if (beatTime < durationMs) {
       beatTimes.push(beatTime);
     }
   }
 
-  // === Estimate Downbeat Offset using confidence scores ===
-  const getOffsetScore = (offset: number) => {
-    let score = 0;
-    let totalConfidence = 0;
-    let patternScore = 0;
-    let consistencyScore = 0;
+  return { gridOffset, beatTimes };
+}
 
-    // Look at groups of 4 beats starting at the offset
-    for (let i = offset; i < beatTimes.length - 4; i += 4) {
-      const barBeats: number[] = [];
-      const barConfidences: number[] = [];
+function getOffsetScore(
+  offset: number,
+  beatTimes: number[],
+  detectedBeats: DetectedBeat[]
+): number {
+  let score = 0;
+  let totalConfidence = 0;
+  let patternScore = 0;
+  let consistencyScore = 0;
 
-      // Analyze all 4 beats in this bar
-      for (let j = 0; j < 4; j++) {
-        const gridTime = beatTimes[i + j];
-        const nearbyBeats = detectedBeats.filter(beat =>
-          Math.abs(beat.time - gridTime) < 100
-        );
+  for (let i = offset; i < beatTimes.length - 4; i += 4) {
+    const barBeats: number[] = [];
+    const barConfidences: number[] = [];
 
-        let beatScore = 0;
-        let maxConfidence = 0;
+    for (let j = 0; j < 4; j++) {
+      const gridTime = beatTimes[i + j];
+      const nearbyBeats = detectedBeats.filter(beat =>
+        Math.abs(beat.time - gridTime) < 100
+      );
 
-        for (const beat of nearbyBeats) {
-          const distance = Math.abs(beat.time - gridTime);
-          const distanceWeight = 1 - (distance / 100);
-          const weightedConfidence = beat.confidence * distanceWeight;
-          beatScore += weightedConfidence;
-          maxConfidence = Math.max(maxConfidence, beat.confidence);
-        }
+      let beatScore = 0;
+      let maxConfidence = 0;
 
-        barBeats.push(beatScore);
-        barConfidences.push(maxConfidence);
+      for (const beat of nearbyBeats) {
+        const distance = Math.abs(beat.time - gridTime);
+        const distanceWeight = 1 - (distance / 100);
+        const weightedConfidence = beat.confidence * distanceWeight;
+        beatScore += weightedConfidence;
+        maxConfidence = Math.max(maxConfidence, beat.confidence);
       }
 
-      // Score based on common rhythm patterns (1-2-3-4 emphasis)
-      const commonPatterns = [
-        [1.0, 0.5, 0.7, 0.5],  // Standard 4/4
-        [1.0, 0.4, 0.8, 0.4],  // Common rock/pop
-        [1.0, 0.3, 0.6, 0.3],  // Heavy downbeat
-      ];
-
-      // Normalize bar beats for pattern matching
-      const maxBeat = Math.max(...barBeats);
-      if (maxBeat > 0) {
-        const normalizedBeats = barBeats.map(b => b / maxBeat);
-
-        // Find best matching pattern
-        for (const pattern of commonPatterns) {
-          let patternMatch = 0;
-          for (let j = 0; j < 4; j++) {
-            patternMatch += 1 - Math.abs(normalizedBeats[j] - pattern[j]);
-          }
-          patternScore += patternMatch;
-        }
-      }
-
-      // Score based on downbeat strength
-      const downbeatStrength = barBeats[0];
-      const otherBeatsAvg = (barBeats[1] + barBeats[2] + barBeats[3]) / 3;
-      if (downbeatStrength > otherBeatsAvg) {
-        score += (downbeatStrength - otherBeatsAvg) * 2;
-      }
-
-      // Score based on confidence consistency
-      const avgConfidence = barConfidences.reduce((a, b) => a + b, 0) / 4;
-      if (barConfidences[0] > avgConfidence) {
-        consistencyScore += barConfidences[0] - avgConfidence;
-      }
-
-      totalConfidence += barConfidences[0];
+      barBeats.push(beatScore);
+      barConfidences.push(maxConfidence);
     }
 
-    // Combine all scoring factors with weights
-    const finalScore = score * 0.4 +
-                      patternScore * 0.3 +
-                      consistencyScore * 0.2 +
-                      totalConfidence * 0.1;
+    const commonPatterns = [
+      [1.0, 0.5, 0.7, 0.5],
+      [1.0, 0.4, 0.8, 0.4],
+      [1.0, 0.3, 0.6, 0.3],
+    ];
 
-    return finalScore;
-  };
+    const maxBeat = Math.max(...barBeats);
+    if (maxBeat > 0) {
+      const normalizedBeats = barBeats.map(b => b / maxBeat);
 
-  // Cache offset scores
+      for (const pattern of commonPatterns) {
+        let patternMatch = 0;
+        for (let j = 0; j < 4; j++) {
+          patternMatch += 1 - Math.abs(normalizedBeats[j] - pattern[j]);
+        }
+        patternScore += patternMatch;
+      }
+    }
+
+    const downbeatStrength = barBeats[0];
+    const otherBeatsAvg = (barBeats[1] + barBeats[2] + barBeats[3]) / 3;
+    if (downbeatStrength > otherBeatsAvg) {
+      score += (downbeatStrength - otherBeatsAvg) * 2;
+    }
+
+    const avgConfidence = barConfidences.reduce((a, b) => a + b, 0) / 4;
+    if (barConfidences[0] > avgConfidence) {
+      consistencyScore += barConfidences[0] - avgConfidence;
+    }
+
+    totalConfidence += barConfidences[0];
+  }
+
+  return score * 0.4 + patternScore * 0.3 + consistencyScore * 0.2 + totalConfidence * 0.1;
+}
+
+async function findBestDownbeatOffset(
+  beatTimes: number[],
+  detectedBeats: DetectedBeat[]
+): Promise<number> {
   const offsets = [0, 1, 2, 3];
-  const offsetScores = [];
+  const offsetScores: OffsetScore[] = [];
   const OFFSET_CHUNK_SIZE = 2;
 
   for (let i = 0; i < offsets.length; i += OFFSET_CHUNK_SIZE) {
     await new Promise(resolve => setTimeout(resolve, 0));
-
+    
     for (let j = i; j < Math.min(i + OFFSET_CHUNK_SIZE, offsets.length); j++) {
       offsetScores.push({
         offset: offsets[j],
-        score: getOffsetScore(offsets[j])
+        score: getOffsetScore(offsets[j], beatTimes, detectedBeats)
       });
     }
   }
 
-  // Sort by score and get top candidates
   const sortedOffsets = offsetScores
     .sort((a, b) => b.score - a.score)
     .slice(0, 2);
 
-  // If top two scores are close, use additional factors to break tie
-  const bestOffset = sortedOffsets[0].score > sortedOffsets[1].score * 1.2
-    ? sortedOffsets[0].offset
-    : offsets.reduce((best, current) => {
-        // Additional tiebreaker: check consistency across larger phrases
-        const checkLargerPhrase = (offset: number) => {
-          let score = 0;
-          // Check 8-beat and 16-beat patterns
-          for (let i = offset; i < beatTimes.length - 16; i += 8) {
-            const beatTime = beatTimes[i];
-            const nearbyBeats = detectedBeats.filter(beat =>
-              Math.abs(beat.time - beatTime) < 100
-            );
-            score += nearbyBeats.reduce((sum, beat) => sum + beat.confidence, 0);
-          }
-          return score;
-        };
+  if (sortedOffsets[0].score > sortedOffsets[1].score * 1.2) {
+    return sortedOffsets[0].offset;
+  }
 
-        return checkLargerPhrase(current) > checkLargerPhrase(best)
-          ? current
-          : best;
-      }, sortedOffsets[0].offset);
+  const checkLargerPhrase = (offset: number): number => {
+    let score = 0;
+    for (let i = offset; i < beatTimes.length - 16; i += 8) {
+      const beatTime = beatTimes[i];
+      const nearbyBeats = detectedBeats.filter(beat =>
+        Math.abs(beat.time - beatTime) < 100
+      );
+      score += nearbyBeats.reduce((sum, beat) => sum + beat.confidence, 0);
+    }
+    return score;
+  };
 
-  console.log('Best downbeat offset:', bestOffset, 'Scores:', offsetScores);
+  return offsets.reduce((best, current) =>
+    checkLargerPhrase(current) > checkLargerPhrase(best) ? current : best,
+    sortedOffsets[0].offset
+  );
+}
 
-  // Group beats into musical phrases based on bars and energy patterns
-  const phrases: {startTime: number, endTime: number}[] = [];
+async function detectPhrases(
+  beatTimes: number[],
+  detectedBeats: DetectedBeat[],
+  bestOffset: number
+): Promise<{ startTime: number; endTime: number }[]> {
+  const phrases: { startTime: number; endTime: number }[] = [];
   const beatsPerBar = 4;
-  const barsPerPhrase = 8; // Standard 8-bar phrases
-  const minBarsForPhrase = 4; // Minimum bars to consider a phrase
-
-  // Calculate energy/confidence for each bar
+  const barsPerPhrase = 8;
+  const minBarsForPhrase = 4;
   const barEnergies: number[] = [];
   const BAR_CHUNK_SIZE = 10;
 
   for (let i = bestOffset; i < beatTimes.length - beatsPerBar; i += beatsPerBar * BAR_CHUNK_SIZE) {
     await new Promise(resolve => setTimeout(resolve, 0));
-
+    
     for (let j = i; j < Math.min(i + beatsPerBar * BAR_CHUNK_SIZE, beatTimes.length - beatsPerBar); j += beatsPerBar) {
       let barEnergy = 0;
       for (let k = 0; k < beatsPerBar; k++) {
@@ -298,15 +287,13 @@ export async function detectBeats(buffer: AudioBuffer): Promise<BeatDetectionRes
         const nearbyBeats = detectedBeats.filter(beat =>
           Math.abs(beat.time - beatTime) < 100
         );
-        // Sum confidence values for this beat
         barEnergy += nearbyBeats.reduce((sum, beat) => sum + beat.confidence, 0);
       }
       barEnergies.push(barEnergy);
     }
   }
 
-  // Detect significant changes in energy to identify phrase boundaries
-  const energyThreshold = Math.max(...barEnergies) * 0.6; // 60% of max energy
+  const energyThreshold = Math.max(...barEnergies) * 0.6;
   let phraseStartBar = 0;
 
   for (let bar = 1; bar < barEnergies.length; bar++) {
@@ -314,7 +301,6 @@ export async function detectBeats(buffer: AudioBuffer): Promise<BeatDetectionRes
       Math.abs(barEnergies[bar] - barEnergies[bar - 1]) > energyThreshold ||
       bar - phraseStartBar >= barsPerPhrase;
 
-    // Check if we've found a phrase boundary
     if (isSignificantChange && bar - phraseStartBar >= minBarsForPhrase) {
       const startBeat = phraseStartBar * beatsPerBar + bestOffset;
       const endBeat = bar * beatsPerBar + bestOffset - 1;
@@ -329,7 +315,6 @@ export async function detectBeats(buffer: AudioBuffer): Promise<BeatDetectionRes
     }
   }
 
-  // Add final phrase if there are enough remaining bars
   const remainingBars = barEnergies.length - phraseStartBar;
   if (remainingBars >= minBarsForPhrase) {
     const startBeat = phraseStartBar * beatsPerBar + bestOffset;
@@ -343,6 +328,36 @@ export async function detectBeats(buffer: AudioBuffer): Promise<BeatDetectionRes
       endTime: beatTimes[endBeat]
     });
   }
+
+  return phrases;
+}
+
+export async function detectBeats(buffer: AudioBuffer): Promise<BeatDetectionResult> {
+  // Step 1: Create filtered buffer for analysis
+  const filteredData = await createFilteredBuffer(buffer);
+
+  // Step 2: Detect raw beats and get initial BPM
+  const { detectedBeats, bpm } = await detectRawBeats(filteredData, buffer.sampleRate);
+  console.log('Detected BPM:', bpm);
+
+  // Step 3: Adjust BPM to standard range
+  let adjustedBpm = bpm;
+  if (adjustedBpm < 90) adjustedBpm *= 2;
+  if (adjustedBpm > 180) adjustedBpm /= 2;
+
+  // Step 4: Find optimal grid offset and generate beat times
+  const { beatTimes } = await findOptimalGridOffset(
+    detectedBeats,
+    adjustedBpm,
+    buffer.duration * 1000
+  );
+
+  // Step 5: Find best downbeat offset
+  const bestOffset = await findBestDownbeatOffset(beatTimes, detectedBeats);
+  console.log('Best downbeat offset:', bestOffset);
+
+  // Step 6: Detect musical phrases
+  const phrases = await detectPhrases(beatTimes, detectedBeats, bestOffset);
 
   return { beatTimes, phrases, bpm: adjustedBpm, downbeatOffset: bestOffset };
 }
