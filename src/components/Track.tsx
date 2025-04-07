@@ -19,10 +19,12 @@ interface TrackProps {
 
 export function Track({ track, onPlayPause, onVolumeChange, metronomeEmitter }: TrackProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const overlayRef = useRef<HTMLCanvasElement>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [zoom, setZoom] = useState(1);  // Zoom factor, 1 = normal, >1 = zoomed in
   const [offset, setOffset] = useState(0);  // Horizontal offset, 0 = start, 1 = end
   const [clickedBeatIndex, setClickedBeatIndex] = useState<number | null>(null);
+  const lastPlayPosition = useRef<number>(0);
 
   const drawWaveform = useCallback(() => {
     const canvas = canvasRef.current;
@@ -77,10 +79,6 @@ export function Track({ track, onPlayPause, onVolumeChange, metronomeEmitter }: 
     // Avoid division by 0
     if (globalMax === 0) globalMax = 1;
 
-    // Calculate the playback position in pixels
-    const playbackPosition = track.currentTime / track.duration;
-    const playbackPixel = Math.floor(((playbackPosition * data.length - visibleStart) / visibleSamples) * canvas.width);
-
     // Create a buffer for the waveform data to improve performance
     const waveformData = new Float32Array(canvas.width);
     for (let i = 0; i < canvas.width; i++) {
@@ -103,7 +101,7 @@ export function Track({ track, onPlayPause, onVolumeChange, metronomeEmitter }: 
       const y = amp - height / 2;
 
       // Draw the line segment in the appropriate color based on playback position
-      ctx.strokeStyle = i <= playbackPixel ? '#2a7edf' : '#4a9eff';
+      ctx.strokeStyle = i <= lastPlayPosition.current ? '#2a7edf' : '#4a9eff';
       ctx.moveTo(i, y);
       ctx.lineTo(i, y + height);
       ctx.stroke();
@@ -155,7 +153,45 @@ export function Track({ track, onPlayPause, onVolumeChange, metronomeEmitter }: 
         }
       }
     }
-  }, [track.audioBuffer, track.beats, track.duration, track.downbeatOffset, track.currentTime, zoom, offset, clickedBeatIndex]);
+  }, [track.audioBuffer, track.beats, track.duration, track.downbeatOffset, zoom, offset, clickedBeatIndex]);
+
+  const updatePlayPosition = useCallback(() => {
+    const overlay = overlayRef.current;
+    if (!overlay || !track.audioBuffer) return;
+
+    const ctx = overlay.getContext('2d');
+    if (!ctx) return;
+
+    // Set overlay dimensions to match main canvas
+    const mainCanvas = canvasRef.current;
+    if (!mainCanvas) return;
+    overlay.width = mainCanvas.width;
+    overlay.height = mainCanvas.height;
+
+    // Clear overlay
+    ctx.clearRect(0, 0, overlay.width, overlay.height);
+
+    // Calculate visible range based on zoom and offset
+    const visibleSamples = track.audioBuffer.length / zoom;
+    const visibleStart = Math.floor(offset * (track.audioBuffer.length - visibleSamples));
+
+    // Calculate play position in samples
+    const playPositionInSamples = track.currentTime * track.audioBuffer.sampleRate;
+
+    // Convert play position to canvas coordinates, accounting for zoom and offset
+    const playbackPixel = Math.floor(
+      ((playPositionInSamples - visibleStart) / visibleSamples) * overlay.width
+    );
+
+    // Only draw if play position is within visible range
+    if (playbackPixel >= 0 && playbackPixel <= overlay.width) {
+      // Draw play position indicator
+      ctx.fillStyle = 'rgba(42, 126, 223, 0.2)'; // Semi-transparent blue
+      ctx.fillRect(0, 0, playbackPixel, overlay.height);
+    }
+
+    lastPlayPosition.current = playbackPixel;
+  }, [track.currentTime, track.duration, track.audioBuffer, zoom, offset]);
 
   const handleCanvasClick = (event: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
@@ -226,6 +262,13 @@ export function Track({ track, onPlayPause, onVolumeChange, metronomeEmitter }: 
   useEffect(() => {
     drawWaveform();
   }, [drawWaveform]);
+
+  useEffect(() => {
+    if (track.isPlaying) {
+      const animationFrame = requestAnimationFrame(updatePlayPosition);
+      return () => cancelAnimationFrame(animationFrame);
+    }
+  }, [track.isPlaying, updatePlayPosition]);
 
   return (
     <Box sx={{
@@ -307,6 +350,17 @@ export function Track({ track, onPlayPause, onVolumeChange, metronomeEmitter }: 
             borderRadius: '4px',
             display: 'block',
             position: 'relative'
+          }}
+        />
+        <canvas
+          ref={overlayRef}
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            width: '100%',
+            height: '100%',
+            pointerEvents: 'none'
           }}
         />
       </Box>
