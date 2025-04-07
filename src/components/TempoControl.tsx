@@ -11,6 +11,7 @@ interface TempoControlProps {
 
 export function TempoControl({ tempo, onChange, metronomeEmitter }: TempoControlProps) {
   const [activeBeat, setActiveBeat] = useState<number | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
 
   useEffect(() => {
     const handleBeat = (event: Event) => {
@@ -70,7 +71,13 @@ export function TempoControl({ tempo, onChange, metronomeEmitter }: TempoControl
       </Box>
       <Slider
         value={tempo}
-        onChange={(e, v) => onChange(v)}
+        onChange={(e, v) => {
+          setIsDragging(true);
+          onChange(v);
+        }}
+        onChangeCommitted={() => {
+          setIsDragging(false);
+        }}
         min={90}
         max={150}
         step={0.1}

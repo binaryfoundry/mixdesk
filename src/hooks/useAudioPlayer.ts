@@ -45,8 +45,7 @@ export function useAudioPlayer() {
   const nextBeatTimeRef = useRef<number>(0);
   const beatCountRef = useRef<number>(0);
   const metronomeSchedulerRef = useRef<number | null>(null);
-  const lastTempoChangeTimeRef = useRef<number>(0);
-  const lastTempoRef = useRef<number>(120);
+  const currentTempoRef = useRef<number>(120);
 
   // Helper function to update a specific track
   const updateTrack = (trackId: string, updates: Partial<Track>) => {
@@ -97,14 +96,22 @@ export function useAudioPlayer() {
   // Initialize metronome audio context
   useEffect(() => {
     metronomeContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
-    // Initialize the first beat time
     nextBeatTimeRef.current = metronomeContextRef.current.currentTime;
-    lastTempoChangeTimeRef.current = nextBeatTimeRef.current;
-    lastTempoRef.current = globalTempo;
+    currentTempoRef.current = globalTempo;
+    scheduleBeats();
+
     return () => {
+      if (metronomeSchedulerRef.current) {
+        clearTimeout(metronomeSchedulerRef.current);
+      }
       metronomeContextRef.current?.close();
     };
   }, []);
+
+  // Update currentTempoRef when globalTempo changes
+  useEffect(() => {
+    currentTempoRef.current = globalTempo;
+  }, [globalTempo]);
 
   // Schedule upcoming metronome beats
   const scheduleBeats = () => {
@@ -116,11 +123,11 @@ export function useAudioPlayer() {
 
     const currentTime = context.currentTime;
     
-    while (nextBeatTimeRef.current < currentTime + scheduleAheadTime) {
+    // Only schedule the next beat if we're close enough to it
+    if (nextBeatTimeRef.current < currentTime + scheduleAheadTime) {
       const beatNumber = beatCountRef.current + 1;
-      console.log(`Beat ${beatNumber} at ${nextBeatTimeRef.current.toFixed(3)}s`);
-      
-      // Dispatch beat event with beat number and timing info
+
+      // Dispatch beat event
       const beatEvent = new CustomEvent(METRONOME_BEAT_EVENT, {
         detail: {
           beatNumber,
@@ -132,45 +139,14 @@ export function useAudioPlayer() {
       
       beatCountRef.current = (beatCountRef.current + 1) % 4;
       
-      const secondsPerBeat = 60.0 / globalTempo;
-      nextBeatTimeRef.current += secondsPerBeat;
+      // Calculate next beat time using current tempo from ref
+      const secondsPerBeat = 60.0 / currentTempoRef.current;
+      nextBeatTimeRef.current = currentTime + secondsPerBeat;
     }
 
+    // Always schedule the next check
     metronomeSchedulerRef.current = window.setTimeout(scheduleBeats, lookaheadMs);
   };
-
-  // High-precision metronome effect
-  useEffect(() => {
-    if (!metronomeContextRef.current) return;
-
-    // When tempo changes, adjust the next beat time to maintain phase
-    const context = metronomeContextRef.current;
-    const currentTime = context.currentTime;
-    
-    // Calculate how many beats have occurred since the last tempo change
-    const timeSinceLastTempoChange = currentTime - lastTempoChangeTimeRef.current;
-    const oldSecondsPerBeat = 60.0 / lastTempoRef.current;
-    const beatsElapsed = timeSinceLastTempoChange / oldSecondsPerBeat;
-    const beatFraction = beatsElapsed - Math.floor(beatsElapsed);
-    
-    // Calculate the next beat time that maintains the current phase
-    const newSecondsPerBeat = 60.0 / globalTempo;
-    nextBeatTimeRef.current = currentTime + ((1 - beatFraction) * newSecondsPerBeat);
-    
-    // Update last tempo change reference
-    lastTempoChangeTimeRef.current = currentTime;
-    lastTempoRef.current = globalTempo;
-
-    // Start scheduling beats
-    scheduleBeats();
-
-    // Cleanup
-    return () => {
-      if (metronomeSchedulerRef.current) {
-        clearTimeout(metronomeSchedulerRef.current);
-      }
-    };
-  }, [globalTempo]);
 
   const initAudio = async () => {
     try {
@@ -372,9 +348,11 @@ export function useAudioPlayer() {
   };
 
   const handleTempoChange = (newValue: number | number[]) => {
+    console.log('Tempo changing to:', newValue);
     const newTempo = newValue as number;
     setGlobalTempo(newTempo);
 
+    // Update track playback rates
     tracks.forEach(track => {
       if (track.sourceNode) {
         const rate = newTempo / track.originalTempo;
