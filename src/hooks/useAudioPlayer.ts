@@ -42,6 +42,7 @@ export function useAudioPlayer() {
   const metronomeContextRef = useRef<AudioContext | null>(null);
   const metronomeNodeRef = useRef<AudioWorkletNode | null>(null);
   const currentTempoRef = useRef<number>(120);
+  const metronomeInitializedRef = useRef<boolean>(false);
 
   // Helper function to adjust playback rate and pitch
   const adjustPlaybackRate = (
@@ -102,6 +103,9 @@ export function useAudioPlayer() {
   // Initialize metronome audio context
   useEffect(() => {
     const initMetronome = async () => {
+      if (metronomeInitializedRef.current) return;
+      metronomeInitializedRef.current = true;
+
       try {
         const context = new (window.AudioContext || (window as any).webkitAudioContext)();
         await context.audioWorklet.addModule('/audio-worklet/MetronomeProcessor.js');
@@ -125,7 +129,7 @@ export function useAudioPlayer() {
         metronomeContextRef.current = context;
         metronomeNodeRef.current = metronomeNode;
         currentTempoRef.current = globalTempo;
-        
+
         // Start the metronome
         metronomeNode.port.postMessage({ type: 'start' });
       } catch (error) {
