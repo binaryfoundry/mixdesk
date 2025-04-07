@@ -186,10 +186,14 @@ export function useAudioPlayer() {
       const sourceNode = track.audioContext.createBufferSource();
       sourceNode.buffer = track.audioBuffer;
 
+      // Set the playback rate
+      const rate = globalTempo / track.originalTempo;
+      sourceNode.playbackRate.value = rate;
+
       // Initialize stretch node
       const stretchNode = await SignalsmithStretch(track.audioContext);
-      const semitones = -12 * Math.log2(globalTempo / track.originalTempo);
-      stretchNode.schedule({ rate: 1.0, semitones: semitones });
+      const semitones = -12 * Math.log2(rate);
+      stretchNode.schedule({ rate: rate, semitones: semitones });
       stretchNode.start();
 
       // Connect the audio processing chain
@@ -198,9 +202,6 @@ export function useAudioPlayer() {
         stretchNode.connect(track.gainNode);
       }
 
-      // Set the playback rate
-      const rate = globalTempo / track.originalTempo;
-      sourceNode.playbackRate.value = rate;
 
       return { sourceNode, stretchNode };
     } catch (error) {
@@ -347,10 +348,11 @@ export function useAudioPlayer() {
       if (track.sourceNode) {
         const rate = newTempo / track.originalTempo;
         track.sourceNode.playbackRate.value = rate;
-      }
-      if (track.stretchNode) {
-        const semitones = -12 * Math.log2(newTempo / track.originalTempo);
-        track.stretchNode.schedule({ rate: 1.0, semitones });
+
+        if (track.stretchNode) {
+          const semitones = -12 * Math.log2(newTempo / track.originalTempo);
+          track.stretchNode.schedule({ rate: rate, semitones });
+        }
       }
       updateTrack(track.id, { tempo: newTempo });
     });
