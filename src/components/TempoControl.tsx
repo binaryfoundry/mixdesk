@@ -17,15 +17,22 @@ export function TempoControl({ tempo, onChange }: TempoControlProps) {
       borderRadius: 1,
       mb: 2
     }}>
-      <Typography variant="body1" sx={{ minWidth: '100px' }}>
-        Global Tempo: {tempo}
-      </Typography>
+      <Box sx={{ 
+        display: 'flex',
+        alignItems: 'center',
+        minWidth: '160px',
+        whiteSpace: 'nowrap'
+      }}>
+        <Typography variant="body1">
+          Global Tempo: <span style={{ fontFamily: 'monospace', minWidth: '36px', display: 'inline-block' }}>{tempo.toFixed(1)}</span>
+        </Typography>
+      </Box>
       <Slider
         value={tempo}
         onChange={(e, v) => onChange(v)}
         min={90}
         max={150}
-        step={1}
+        step={0.1}
         sx={{ flex: 1 }}
       />
     </Box>
