@@ -37,6 +37,10 @@ export function useAudioPlayer() {
   const animationFrameRef = useRef<number | null>(null);
   const startTimeRef = useRef<number>(0);
   const startOffsetRef = useRef<number>(0);
+  const metronomeContextRef = useRef<AudioContext | null>(null);
+  const nextBeatTimeRef = useRef<number>(0);
+  const beatCountRef = useRef<number>(0);
+  const metronomeSchedulerRef = useRef<number | null>(null);
 
   // Helper function to update a specific track
   const updateTrack = (trackId: string, updates: Partial<Track>) => {
@@ -83,6 +87,58 @@ export function useAudioPlayer() {
       }
     };
   }, []);
+
+  // Initialize metronome audio context
+  useEffect(() => {
+    metronomeContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+    return () => {
+      metronomeContextRef.current?.close();
+    };
+  }, []);
+
+  // Schedule upcoming metronome beats
+  const scheduleBeats = () => {
+    const lookaheadMs = 25.0; // How far ahead to schedule audio (in milliseconds)
+    const scheduleAheadTime = 0.1; // How far ahead to schedule events (in seconds)
+    
+    const context = metronomeContextRef.current;
+    if (!context) return;
+
+    const currentTime = context.currentTime;
+    
+    // Schedule beats until we're ahead by scheduleAheadTime
+    while (nextBeatTimeRef.current < currentTime + scheduleAheadTime) {
+      // Log the beat (you can replace this with actual audio playback if needed)
+      console.log(`Beat ${beatCountRef.current + 1} scheduled at ${nextBeatTimeRef.current}`);
+      
+      // Calculate time for next beat
+      const secondsPerBeat = 60.0 / globalTempo;
+      beatCountRef.current = (beatCountRef.current + 1) % 4;
+      nextBeatTimeRef.current += secondsPerBeat;
+    }
+
+    // Schedule next check
+    metronomeSchedulerRef.current = window.setTimeout(scheduleBeats, lookaheadMs);
+  };
+
+  // High-precision metronome effect
+  useEffect(() => {
+    if (!metronomeContextRef.current) return;
+
+    // Reset timing when tempo changes
+    nextBeatTimeRef.current = metronomeContextRef.current.currentTime;
+    beatCountRef.current = 0;
+
+    // Start scheduling beats
+    scheduleBeats();
+
+    // Cleanup
+    return () => {
+      if (metronomeSchedulerRef.current) {
+        clearTimeout(metronomeSchedulerRef.current);
+      }
+    };
+  }, [globalTempo]);
 
   const initAudio = async () => {
     try {
