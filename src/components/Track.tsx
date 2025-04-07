@@ -81,10 +81,10 @@ export function Track({ track, onPlayPause, onVolumeChange, metronomeEmitter }: 
     const playbackPosition = track.currentTime / track.duration;
     const playbackPixel = Math.floor(((playbackPosition * data.length - visibleStart) / visibleSamples) * canvas.width);
 
-    // Draw the normalized waveform in two parts - played and unplayed
+    // Create a buffer for the waveform data to improve performance
+    const waveformData = new Float32Array(canvas.width);
     for (let i = 0; i < canvas.width; i++) {
       let max = 0;
-
       const start = Math.floor(visibleStart + i * step);
       const end = Math.min(start + step, data.length);
 
@@ -92,13 +92,17 @@ export function Track({ track, onPlayPause, onVolumeChange, metronomeEmitter }: 
         const absValue = Math.abs(data[j]);
         if (absValue > max) max = absValue;
       }
+      waveformData[i] = max;
+    }
 
-      const normalized = max / globalMax; // Normalize to [0, 1] based on global maximum
+    // Draw the normalized waveform in two parts - played and unplayed
+    ctx.beginPath();
+    for (let i = 0; i < canvas.width; i++) {
+      const normalized = waveformData[i] / globalMax; // Normalize to [0, 1] based on global maximum
       const height = normalized * amp * 2;
       const y = amp - height / 2;
 
       // Draw the line segment in the appropriate color based on playback position
-      ctx.beginPath();
       ctx.strokeStyle = i <= playbackPixel ? '#2a7edf' : '#4a9eff';
       ctx.moveTo(i, y);
       ctx.lineTo(i, y + height);
@@ -197,22 +201,17 @@ export function Track({ track, onPlayPause, onVolumeChange, metronomeEmitter }: 
       // Update the track's current time
       track.currentTime = beatTime;
 
-      // If the track is playing, we need to restart playback from the new position
-      //if (track.isPlaying) {
-      //  onPlayPause(track.id); // This will stop and restart playback at the new position
-      //} else {
-        // If not playing, wait for the next metronome beat to start playback
-        const handleMetronomeBeat = (event: Event) => {
-          const beatEvent = event as CustomEvent;
-          // Remove the event listener after the first beat
-          metronomeEmitter.removeEventListener(METRONOME_BEAT_EVENT, handleMetronomeBeat);
-          // Start playback at the selected beat
-          onPlayPause(track.id);
-        };
-        
-        // Add event listener for the next metronome beat
-        metronomeEmitter.addEventListener(METRONOME_BEAT_EVENT, handleMetronomeBeat);
-      //}
+      // Wait for the next metronome beat to start playback
+      const handleMetronomeBeat = (event: Event) => {
+        const beatEvent = event as CustomEvent;
+        // Remove the event listener after the first beat
+        metronomeEmitter.removeEventListener(METRONOME_BEAT_EVENT, handleMetronomeBeat);
+        // Start playback at the selected beat
+        onPlayPause(track.id);
+      };
+
+      // Add event listener for the next metronome beat
+      metronomeEmitter.addEventListener(METRONOME_BEAT_EVENT, handleMetronomeBeat);
 
       console.log('Clicked at time:', timeAtClick);
       console.log('Selected beat:', {

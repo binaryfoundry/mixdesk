@@ -35,12 +35,11 @@ export interface Track {
 
 export function useAudioPlayer() {
   const [tracks, setTracks] = useState<Track[]>([]);
-  const [activeTrackId, setActiveTrackId] = useState<string | null>(null);
   const [globalTempo, setGlobalTempo] = useState(120);
   const timeUpdateIntervalRef = useRef<number | null>(null);
   const animationFrameRef = useRef<number | null>(null);
-  const startTimeRef = useRef<number>(0);
-  const startOffsetRef = useRef<number>(0);
+  const startTimeRefs = useRef<Map<string, number>>(new Map());
+  const startOffsetRefs = useRef<Map<string, number>>(new Map());
   const metronomeContextRef = useRef<AudioContext | null>(null);
   const nextBeatTimeRef = useRef<number>(0);
   const beatCountRef = useRef<number>(0);
@@ -60,38 +59,34 @@ export function useAudioPlayer() {
 
   // Update current time while playing
   useEffect(() => {
-    if (activeTrackId) {
-      const track = tracks.find(t => t.id === activeTrackId);
-      if (track?.isPlaying && track.sourceNode) {
-        const updateTime = () => {
-          const elapsed = (track.audioContext.currentTime || 0) - startTimeRef.current;
-          const newTime = startOffsetRef.current + elapsed;
+    const updateTime = () => {
+      const now = Date.now();
+      tracks.forEach(track => {
+        if (track.isPlaying && track.sourceNode) {
+          const startTime = startTimeRefs.current.get(track.id);
+          const startOffset = startOffsetRefs.current.get(track.id);
+          
+          if (startTime !== undefined && startOffset !== undefined) {
+            const elapsed = (track.audioContext.currentTime || 0) - startTime;
+            const newTime = startOffset + elapsed;
 
-          if (isFinite(newTime) && newTime >= 0 && newTime <= track.duration) {
-            updateTrack(activeTrackId, { currentTime: newTime });
-            animationFrameRef.current = requestAnimationFrame(updateTime);
+            if (isFinite(newTime) && newTime >= 0 && newTime <= track.duration) {
+              updateTrack(track.id, { currentTime: newTime });
+            }
           }
-        };
+        }
+      });
+      animationFrameRef.current = requestAnimationFrame(updateTime);
+    };
 
-        animationFrameRef.current = requestAnimationFrame(updateTime);
+    animationFrameRef.current = requestAnimationFrame(updateTime);
 
-        return () => {
-          if (animationFrameRef.current) {
-            cancelAnimationFrame(animationFrameRef.current);
-          }
-        };
-      }
-    }
-  }, [activeTrackId, tracks]);
-
-  // Clean up animation frame on unmount
-  useEffect(() => {
     return () => {
       if (animationFrameRef.current) {
         cancelAnimationFrame(animationFrameRef.current);
       }
     };
-  }, []);
+  }, [tracks]);
 
   // Initialize metronome audio context
   useEffect(() => {
@@ -287,9 +282,6 @@ export function useAudioPlayer() {
       if (track.isPlaying) {
         // Stop the current playback
         track.sourceNode?.stop();
-        if (animationFrameRef.current) {
-          cancelAnimationFrame(animationFrameRef.current);
-        }
         
         // If we're seeking to a new position, start playing from there
         if (track.currentTime > 0) {
@@ -300,15 +292,14 @@ export function useAudioPlayer() {
           sourceNode.playbackRate.value = globalTempo / track.originalTempo;
 
           // Start playback from the current time
-          startTimeRef.current = track.audioContext.currentTime;
-          startOffsetRef.current = track.currentTime;
+          startTimeRefs.current.set(track.id, track.audioContext.currentTime);
+          startOffsetRefs.current.set(track.id, track.currentTime);
           sourceNode.start(0, track.currentTime);
 
           updateTrack(trackId, { 
             sourceNode,
             isPlaying: true 
           });
-          setActiveTrackId(trackId);
         } else {
           // If not seeking, just pause
           updateTrack(trackId, { isPlaying: false });
@@ -323,15 +314,14 @@ export function useAudioPlayer() {
         sourceNode.playbackRate.value = globalTempo / track.originalTempo;
 
         // Start playback from the current time
-        startTimeRef.current = track.audioContext.currentTime;
-        startOffsetRef.current = validCurrentTime;
+        startTimeRefs.current.set(track.id, track.audioContext.currentTime);
+        startOffsetRefs.current.set(track.id, validCurrentTime);
         sourceNode.start(0, validCurrentTime);
 
         updateTrack(trackId, { 
           sourceNode,
           isPlaying: true 
         });
-        setActiveTrackId(trackId);
       }
     } catch (error) {
       console.error('Error in handlePlayPause:', error);
