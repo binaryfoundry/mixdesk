@@ -1,4 +1,4 @@
-class Metronome {
+export class Metronome {
   private audioContext: AudioContext;
   private tempo: number; // in Beats Per Minute (BPM)
   private nextTickTime: number;
@@ -8,7 +8,8 @@ class Metronome {
   // Interval (in ms) for checking and scheduling upcoming ticks.
   private lookahead: number = 25;
   // Array of callbacks to be invoked on each tick.
-  private tickListeners: Array<() => void> = [];
+  private tickListeners: Array<(beatNumber: number) => void> = [];
+  private currentBeat: number = 0;
 
   constructor(initialTempo: number = 120) {
     // Create an AudioContext for high-resolution timing.
@@ -25,6 +26,7 @@ class Metronome {
     if (this.schedulerTimerId === null) {
       // Reset nextTickTime to current time for a fresh start.
       this.nextTickTime = this.audioContext.currentTime;
+      this.currentBeat = 0;
       this.scheduler();
     }
   }
@@ -42,7 +44,7 @@ class Metronome {
   /**
    * Register a callback function that will be called on every tick.
    */
-  public addTickListener(callback: () => void): void {
+  public addTickListener(callback: (beatNumber: number) => void): void {
     this.tickListeners.push(callback);
   }
 
@@ -76,7 +78,8 @@ class Metronome {
   private scheduleTick(scheduledTime: number): void {
     const delay = Math.max(scheduledTime - this.audioContext.currentTime, 0) * 1000;
     setTimeout(() => {
-      this.tickListeners.forEach(callback => callback());
+      this.currentBeat++;
+      this.tickListeners.forEach(callback => callback(this.currentBeat));
     }, delay);
   }
 }

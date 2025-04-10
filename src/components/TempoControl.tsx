@@ -15,8 +15,11 @@ export function TempoControl({ tempo, onChange, metronomeEmitter }: TempoControl
 
   useEffect(() => {
     const handleBeat = (event: Event) => {
-      const beatEvent = event as CustomEvent;
-      setCurrentBeat(beatEvent.detail.beatNumber);
+      const customEvent = event as CustomEvent<{ beatNumber: number }>;
+      const beatNumber = customEvent.detail.beatNumber;
+
+      // Update the visual beat indicator (1-4)
+      setCurrentBeat((beatNumber % 4) + 1);
     };
 
     metronomeEmitter.addEventListener(METRONOME_BEAT_EVENT, handleBeat);
