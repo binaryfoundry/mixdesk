@@ -239,11 +239,11 @@ export function useAudioPlayer() {
         if (track.sourceNode) {
           track.sourceNode.stop();
         }
-        updateTrack(track.id, { 
-          isPlaying: false,
-          startTime: null,
-          startOffset: null
-        });
+
+        track.isPlaying = false;
+        track.startTime = null;
+        track.startOffset = null;
+
       } else {
         // Start playback
         const sourceNode = track.audioContext.createBufferSource();
@@ -254,10 +254,7 @@ export function useAudioPlayer() {
         sourceNode.playbackRate.value = rate;
         
         sourceNode.connect(track.stretchNode!);
-        
-        updateTrack(track.id, {
-          sourceNode
-        });
+        track.sourceNode = sourceNode;
 
         // Ensure the stretch node is also updated
         if (track.stretchNode) {
@@ -269,12 +266,10 @@ export function useAudioPlayer() {
         const startOffset = track.currentTime;
         
         sourceNode.start(0, startOffset);
-        
-        updateTrack(track.id, {
-          isPlaying: true,
-          startTime,
-          startOffset
-        });
+
+        track.isPlaying = true;
+        track.startTime = startTime;
+        track.startOffset = startOffset;
       }
     } catch (error) {
       console.error('Error handling play/pause:', error);
@@ -286,8 +281,8 @@ export function useAudioPlayer() {
     const track = tracks.find(t => t.id === trackId);
     if (track?.gainNode) {
       track.gainNode.gain.value = newVolume;
+      track.volume = newVolume;
     }
-    updateTrack(trackId, { volume: newVolume });
   };
 
   const handleTempoChange = (newValue: number | number[]) => {
@@ -301,7 +296,7 @@ export function useAudioPlayer() {
       if (track.sourceNode) {
         adjustPlaybackRate(track, 1);
       }
-      updateTrack(track.id, { tempo: newTempo });
+      track.tempo = newTempo;
     });
   };
 
