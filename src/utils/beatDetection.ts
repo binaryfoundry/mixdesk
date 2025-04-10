@@ -20,11 +20,23 @@ interface OffsetScore {
 async function createFilteredBuffer(buffer: AudioBuffer): Promise<Float32Array> {
   const sampleRate = buffer.sampleRate;
   const numSamples = buffer.length;
+  const silenceDuration = 10; // 10 seconds of silence
+  const silenceSamples = Math.floor(silenceDuration * sampleRate);
+  const totalSamples = silenceSamples + numSamples;
 
-  // Create offline context for analysis
-  const offlineCtx = new OfflineAudioContext(1, numSamples, sampleRate);
+  // Create offline context for analysis with extra space for silence
+  const offlineCtx = new OfflineAudioContext(1, totalSamples, sampleRate);
   const source = offlineCtx.createBufferSource();
-  source.buffer = buffer;
+  
+  // Create a new buffer with silence at the beginning
+  const newBuffer = offlineCtx.createBuffer(1, totalSamples, sampleRate);
+  const originalData = buffer.getChannelData(0);
+  const newData = newBuffer.getChannelData(0);
+  
+  // Leave first silenceSamples empty (silence)
+  newData.set(originalData, silenceSamples);
+  
+  source.buffer = newBuffer;
 
   // Create a more sophisticated filter chain for breakbeat detection
   const highpass = offlineCtx.createBiquadFilter();
@@ -310,5 +322,23 @@ export async function detectBeats(buffer: AudioBuffer): Promise<BeatDetectionRes
   // Step 6: Detect musical phrases
   const phrases = await detectPhrases(beatTimes, detectedBeats, bestOffset);
 
-  return { beatTimes, phrases, bpm: adjustedBpm, downbeatOffset: bestOffset };
+  // Adjust all times by subtracting the silence duration
+  const silenceMs = 10000; // 10 seconds in milliseconds
+  const adjustedBeatTimes = beatTimes
+    .filter(time => time >= silenceMs)
+    .map(time => time - silenceMs);
+  
+  const adjustedPhrases = phrases
+    .filter(phrase => phrase.startTime >= silenceMs)
+    .map(phrase => ({
+      startTime: phrase.startTime - silenceMs,
+      endTime: phrase.endTime - silenceMs
+    }));
+
+  return { 
+    beatTimes: adjustedBeatTimes, 
+    phrases: adjustedPhrases, 
+    bpm: adjustedBpm, 
+    downbeatOffset: bestOffset 
+  };
 }
