@@ -67,7 +67,6 @@ async function detectRawBeats(
   const hopSize = 512;
   const bufferSize = 2048;
   const CHUNK_SIZE = 10000;
-  let totalFrames = 0;
 
   // Process audio in chunks to avoid blocking the main thread
   for (let chunkStart = 0; chunkStart < data.length - bufferSize; chunkStart += CHUNK_SIZE) {
@@ -87,14 +86,13 @@ async function detectRawBeats(
       const confidence = tempo.do(processBuffer);
       
       // Only keep beats with sufficient confidence
-      if (confidence > 0.3) {
-        const beatTimeMs = (totalFrames / sampleRate) * 1000;
+      if (confidence > 0.0) {
+        const beatTimeMs = (i / sampleRate) * 1000;
         detectedBeats.push({
-          time: Math.round(beatTimeMs),
+          time: beatTimeMs,
           confidence
         });
       }
-      totalFrames += hopSize;
     }
   }
 
@@ -106,7 +104,6 @@ async function detectRawBeats(
       filteredBeats.push(current);
     }
   }
-
   return {
     detectedBeats: filteredBeats,
     bpm: tempo.getBpm()
