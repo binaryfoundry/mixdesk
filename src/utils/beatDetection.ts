@@ -73,7 +73,7 @@ async function detectRawBeats(
     const frame = data.subarray(i, i + hopSize);
     let timeSec = i / sampleRate;
     let confidence = tempo.do(frame);
-    if (confidence > 0.3) {
+    if (confidence > 0.0) {
       detectedBeats.push({
         time: timeSec * 1000,
         confidence
