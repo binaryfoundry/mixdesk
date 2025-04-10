@@ -56,6 +56,10 @@ export class Metronome {
     this.tempo = newTempo;
   }
 
+  public getTempo(): number {
+    return this.tempo;
+  }
+
   /**
    * The scheduler function checks ahead of time and schedules tick events.
    */

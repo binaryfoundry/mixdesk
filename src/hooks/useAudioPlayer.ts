@@ -37,21 +37,27 @@ export interface Track {
 
 export function useAudioPlayer() {
   const [tracks, setTracks] = useState<Track[]>([]);
-  const [globalTempo, setGlobalTempo] = useState(120);
   const animationFrameRef = useRef<number | null>(null);
   const startTimeRefs = useRef<Map<string, number>>(new Map());
   const startOffsetRefs = useRef<Map<string, number>>(new Map());
   const metronomeInitializedRef = useRef<boolean>(false);
   const metronomeRef = useRef<Metronome | null>(null);
 
+  // Initialize metronome only once
+  if (!metronomeInitializedRef.current) {
+    metronomeRef.current = new Metronome(120);
+    metronomeRef.current.start();
+    metronomeInitializedRef.current = true;
+  }
+
   // Helper function to adjust playback rate and pitch
   const adjustPlaybackRate = (
     track: Track,
     correctionFactor: number = 1
   ) => {
-    if (!track.sourceNode || !track.stretchNode) return;
+    if (!track.sourceNode || !track.stretchNode || !metronomeRef.current) return;
     
-    const rate = (globalTempo / track.originalTempo) * correctionFactor;
+    const rate = (metronomeRef.current.getTempo() / track.originalTempo) * correctionFactor;
     
     // Use setValueAtTime for precise timing
     track.sourceNode.playbackRate.setValueAtTime(rate, track.audioContext.currentTime);
@@ -59,25 +65,6 @@ export function useAudioPlayer() {
     const semitones = -12 * Math.log2(rate);
     track.stretchNode.schedule({ rate, semitones });
   };
-
-  // Initialize metronome
-  useEffect(() => {
-    if (!metronomeRef.current) {
-      metronomeRef.current = new Metronome(globalTempo);
-      metronomeRef.current.addTickListener((beatNumber) => {
-        metronomeEmitter.dispatchEvent(new CustomEvent(METRONOME_BEAT_EVENT, { detail: { beatNumber } }));
-      });
-      // Start the metronome immediately and keep it running
-      metronomeRef.current.start();
-    }
-  }, []);
-
-  // Update metronome tempo when global tempo changes
-  useEffect(() => {
-    if (metronomeRef.current) {
-      metronomeRef.current.setTempo(globalTempo);
-    }
-  }, [globalTempo]);
 
   // Helper function to update a specific track
   const updateTrack = (trackId: string, updates: Partial<Track>) => {
@@ -295,7 +282,9 @@ export function useAudioPlayer() {
 
   const handleTempoChange = (newValue: number | number[]) => {
     const newTempo = newValue as number;
-    setGlobalTempo(newTempo);
+    if (metronomeRef.current) {
+      metronomeRef.current.setTempo(newTempo);
+    }
 
     // Update track playback rates
     tracks.forEach(track => {
@@ -308,11 +297,11 @@ export function useAudioPlayer() {
 
   return {
     tracks,
-    globalTempo,
     handleFileUpload,
     handlePlayPause,
     handleVolumeChange,
     handleTempoChange,
-    metronomeEmitter
+    metronomeEmitter,
+    metronome: metronomeRef.current
   };
 }

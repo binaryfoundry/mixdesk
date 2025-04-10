@@ -10,12 +10,12 @@ import { TrackList } from './TrackList';
 export default function AudioPlayer() {
   const {
     tracks,
-    globalTempo,
     handleFileUpload,
     handlePlayPause,
     handleVolumeChange,
     handleTempoChange,
-    metronomeEmitter
+    metronomeEmitter,
+    metronome
   } = useAudioPlayer();
 
   return (
@@ -82,7 +82,7 @@ export default function AudioPlayer() {
             minWidth: 0
           }}>
             <TempoControl
-              tempo={globalTempo}
+              metronome={metronome}
               onChange={handleTempoChange}
               metronomeEmitter={metronomeEmitter}
             />

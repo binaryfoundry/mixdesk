@@ -1,32 +1,38 @@
 // Material-UI imports
 import { Box, Slider, Typography } from '@mui/material';
-import { useEffect, useState } from 'react';
-import { METRONOME_BEAT_EVENT } from '../hooks/useAudioPlayer';
+import { useEffect, useState, useRef } from 'react';
+import { Metronome } from '../Metronome';
 
 interface TempoControlProps {
-  tempo: number;
   onChange: (value: number | number[]) => void;
-  metronomeEmitter: EventTarget;
+  metronome: Metronome;
 }
 
-export function TempoControl({ tempo, onChange, metronomeEmitter }: TempoControlProps) {
+export function TempoControl({ onChange, metronome }: TempoControlProps) {
   const [currentBeat, setCurrentBeat] = useState<number>(4);
   const [isDragging, setIsDragging] = useState(false);
+  const [sliderValue, setSliderValue] = useState(metronome?.getTempo() || 120);
+  const tickListenerAdded = useRef(false);
 
+  // Update local state when metronome tempo changes
   useEffect(() => {
-    const handleBeat = (event: Event) => {
-      const customEvent = event as CustomEvent<{ beatNumber: number }>;
-      const beatNumber = customEvent.detail.beatNumber;
+    if (metronome) {
+      setSliderValue(metronome.getTempo());
+    }
+  }, [metronome?.getTempo()]);
 
+  // Set up metronome tick listener only once
+  useEffect(() => {
+    if (!metronome || tickListenerAdded.current) return;
+
+    const handleTick = (beatNumber: number) => {
       // Update the visual beat indicator (1-4)
       setCurrentBeat((beatNumber % 4) + 1);
     };
 
-    metronomeEmitter.addEventListener(METRONOME_BEAT_EVENT, handleBeat);
-    return () => {
-      metronomeEmitter.removeEventListener(METRONOME_BEAT_EVENT, handleBeat);
-    };
-  }, [metronomeEmitter]);
+    metronome.addTickListener(handleTick);
+    tickListenerAdded.current = true;
+  }, [metronome]);
 
   return (
     <Box sx={{
@@ -44,10 +50,11 @@ export function TempoControl({ tempo, onChange, metronomeEmitter }: TempoControl
         alignItems: 'center',
         gap: 2,
         minWidth: '160px',
-        whiteSpace: 'nowrap'
+        whiteSpace: 'nowrap',
+        flexShrink: 0
       }}>
         <Typography variant="body1">
-          Global Tempo: {tempo.toFixed(1)}
+          Global Tempo: {metronome?.getTempo()?.toFixed(1) || '120.0'}
         </Typography>
         <Box sx={{ display: 'flex', gap: 1 }}>
           {[1, 2, 3, 4].map((beat) => (
@@ -70,20 +77,22 @@ export function TempoControl({ tempo, onChange, metronomeEmitter }: TempoControl
           ))}
         </Box>
       </Box>
-      <Slider
-        value={tempo}
-        onChange={(e, v) => {
-          setIsDragging(true);
-          onChange(v);
-        }}
-        onChangeCommitted={() => {
-          setIsDragging(false);
-        }}
-        min={90}
-        max={150}
-        step={0.1}
-        sx={{ flex: 1 }}
-      />
+      <Box sx={{ flex: 1, minWidth: 0 }}>
+        <Slider
+          value={sliderValue}
+          onChange={(_, value) => {
+            const newTempo = value as number;
+            setSliderValue(newTempo);
+            metronome?.setTempo(newTempo);
+            onChange(value);
+          }}
+          min={90}
+          max={150}
+          step={0.1}
+          onMouseDown={() => setIsDragging(true)}
+          onMouseUp={() => setIsDragging(false)}
+        />
+      </Box>
     </Box>
   );
 }
