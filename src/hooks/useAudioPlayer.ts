@@ -263,11 +263,12 @@ export function useAudioPlayer() {
         }
         
         const startTime = track.audioContext.currentTime;
-        const startOffset = track.currentTime;
+        const nextBeatTime = metronomeRef.current?.getTimeUntilNextBeat() || 0;
+        const startOffset = track.currentTime - nextBeatTime;
         
         sourceNode.start(0, startOffset);
         adjustPlaybackRate(track, 1);
-        
+
         track.isPlaying = true;
         track.startTime = startTime;
         track.startOffset = startOffset;

@@ -61,6 +61,19 @@ export class Metronome {
   }
 
   /**
+   * Get the exact time (in seconds) until the next beat event.
+   * Returns 0 if the metronome is not running.
+   */
+  public getTimeUntilNextBeat(): number {
+    if (this.schedulerTimerId === null) {
+      return 0;
+    }
+    const now = this.audioContext.currentTime;
+    const timeUntilNextBeat = this.nextTickTime - now;
+    return Math.max(0, timeUntilNextBeat);
+  }
+
+  /**
    * The scheduler function checks ahead of time and schedules tick events.
    */
   private scheduler = () => {
