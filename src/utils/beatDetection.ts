@@ -124,7 +124,7 @@ async function findOptimalGridOffset(
         for (const beat of nearbyBeats) {
           const distance = Math.abs(beat.time - gridTime);
           const distanceWeight = 1 - (distance / 100);
-          score += beat.confidence * distanceWeight;
+          score += (beat.confidence > 0.01 ? 1.0 : 0.01) * distanceWeight;
         }
       }
 
