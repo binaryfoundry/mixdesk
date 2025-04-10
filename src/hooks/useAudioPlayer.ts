@@ -235,44 +235,37 @@ export function useAudioPlayer() {
       }
 
       if (track.isPlaying) {
-        // Stop playback
-        if (track.sourceNode) {
-          track.sourceNode.stop();
-        }
-
-        track.isPlaying = false;
-        track.startTime = null;
-        track.startOffset = null;
-
-      } else {
-        // Start playback
-        const sourceNode = track.audioContext.createBufferSource();
-        sourceNode.buffer = track.audioBuffer;
-        
-        // Calculate and set the playback rate before connecting and starting
-        const rate = (metronomeRef.current?.getTempo() || 120) / track.originalTempo;
-        sourceNode.playbackRate.value = rate;
-        
-        sourceNode.connect(track.stretchNode!);
-        track.sourceNode = sourceNode;
-
-        // Ensure the stretch node is also updated
-        if (track.stretchNode) {
-          const semitones = -12 * Math.log2(rate);
-          track.stretchNode.schedule({ rate, semitones });
-        }
-        
-        const startTime = track.audioContext.currentTime;
-        const nextBeatTime = metronomeRef.current?.getTimeUntilNextBeat() || 0;
-        const startOffset = track.currentTime - nextBeatTime;
-        
-        sourceNode.start(0, startOffset);
-        adjustPlaybackRate(track, 1);
-
-        track.isPlaying = true;
-        track.startTime = startTime;
-        track.startOffset = startOffset;
+        track.sourceNode?.stop();
       }
+
+      // Start playback
+      const sourceNode = track.audioContext.createBufferSource();
+      sourceNode.buffer = track.audioBuffer;
+      
+      // Calculate and set the playback rate before connecting and starting
+      const rate = (metronomeRef.current?.getTempo() || 120) / track.originalTempo;
+      sourceNode.playbackRate.value = rate;
+      
+      sourceNode.connect(track.stretchNode!);
+      track.sourceNode = sourceNode;
+
+      // Ensure the stretch node is also updated
+      if (track.stretchNode) {
+        const semitones = -12 * Math.log2(rate);
+        track.stretchNode.schedule({ rate, semitones });
+      }
+      
+      const startTime = track.audioContext.currentTime;
+      const nextBeatTime = metronomeRef.current?.getTimeUntilNextBeat() || 0;
+      const startOffset = track.currentTime - nextBeatTime;
+      
+      sourceNode.start(0, startOffset);
+      adjustPlaybackRate(track, 1);
+
+      track.isPlaying = true;
+      track.startTime = startTime;
+      track.startOffset = startOffset;
+
     } catch (error) {
       console.error('Error handling play/pause:', error);
     }
