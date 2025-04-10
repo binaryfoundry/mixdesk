@@ -14,7 +14,6 @@ export default function AudioPlayer() {
     handlePlayPause,
     handleVolumeChange,
     handleTempoChange,
-    metronomeEmitter,
     metronome
   } = useAudioPlayer();
 
@@ -84,7 +83,6 @@ export default function AudioPlayer() {
             <TempoControl
               metronome={metronome}
               onChange={handleTempoChange}
-              metronomeEmitter={metronomeEmitter}
             />
           </Box>
         </Box>
@@ -100,7 +98,6 @@ export default function AudioPlayer() {
             tracks={tracks}
             onPlayPause={handlePlayPause}
             onVolumeChange={handleVolumeChange}
-            metronomeEmitter={metronomeEmitter}
           />
         </Box>
       </Box>

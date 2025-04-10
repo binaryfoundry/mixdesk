@@ -229,10 +229,9 @@ export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
       // Get the beat time
       const beatTime = beatTimesInSeconds[selectedBeatIndex];
 
-      // Update the track's current time and clicked beat index
-      track.currentTime = beatTime;
+      // Update the track
       track.clickedBeatIndex = selectedBeatIndex;
-
+      track.selectedStartTime = beatTime;
       onPlayPause(track.id);
 
       console.log('Clicked at time:', timeAtClick);

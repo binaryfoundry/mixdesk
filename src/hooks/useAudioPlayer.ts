@@ -30,7 +30,7 @@ export interface Track {
   downbeatOffset: number;
   clickedBeatIndex: number | null;
   startTime: number | null;
-  startOffset: number | null;
+  selectedStartTime: number;
 }
 
 export const METRONOME_BEAT_EVENT = 'metronomeBeat';
@@ -78,15 +78,11 @@ export function useAudioPlayer() {
   // Update current time while playing
   useEffect(() => {
     const updateTime = () => {
-      const now = Date.now();
       tracks.forEach(track => {
-        if (track.isPlaying && track.sourceNode && track.startTime !== null && track.startOffset !== null) {
+        if (track.isPlaying && track.sourceNode && track.startTime !== null) {
           const elapsed = (track.audioContext.currentTime || 0) - track.startTime;
-          const newTime = track.startOffset + elapsed;
-
-          if (isFinite(newTime) && newTime >= 0 && newTime <= track.duration) {
-            updateTrack(track.id, { currentTime: newTime });
-          }
+          const newTime = elapsed;
+          track.currentTime = newTime;
         }
       });
       animationFrameRef.current = requestAnimationFrame(updateTime);
@@ -199,7 +195,7 @@ export function useAudioPlayer() {
           downbeatOffset: 0,
           clickedBeatIndex: null,
           startTime: null,
-          startOffset: null
+          selectedStartTime: 0
         };
 
         // Initialize audio processing
@@ -244,16 +240,15 @@ export function useAudioPlayer() {
 
       adjustPlaybackRate(track, 1);
 
-      const startTime = track.audioContext.currentTime;
       const nextBeatTime = metronomeRef.current?.getTimeUntilNextBeat() || 0;
-      const startOffset = track.currentTime - nextBeatTime;
-      
-      sourceNode.start(0, startOffset);
+      const nextBeatTimeOffset = nextBeatTime - track.selectedStartTime;
+      const adjustedStartTime = track.audioContext.currentTime - nextBeatTimeOffset;
+
+      sourceNode.start(0, adjustedStartTime);
       adjustPlaybackRate(track, 1);
 
       track.isPlaying = true;
-      track.startTime = startTime;
-      track.startOffset = startOffset;
+      track.startTime = adjustedStartTime;
 
     } catch (error) {
       console.error('Error handling play/pause:', error);
