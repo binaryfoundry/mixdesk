@@ -263,10 +263,8 @@ export function useAudioPlayer() {
         // Start playback
         const sourceNode = track.audioContext.createBufferSource();
         sourceNode.buffer = track.audioBuffer;
-        
-        if (track.gainNode) {
-          sourceNode.connect(track.gainNode);
-        }
+        sourceNode.connect(track.stretchNode!);
+        adjustPlaybackRate(track, 1);
         
         const startTime = track.audioContext.currentTime;
         const startOffset = track.currentTime;
