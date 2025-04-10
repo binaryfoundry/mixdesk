@@ -23,6 +23,7 @@ export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
   const [zoom, setZoom] = useState(1);  // Zoom factor, 1 = normal, >1 = zoomed in
   const [offset, setOffset] = useState(0);  // Horizontal offset, 0 = start, 1 = end
   const lastPlayPosition = useRef<number>(0);
+  const [beatTimesInSeconds, setBeatTimesInSeconds] = useState<number[]>([]);
 
   const drawWaveform = useCallback(() => {
     const canvas = canvasRef.current;
@@ -191,9 +192,16 @@ export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
     lastPlayPosition.current = playbackPixel;
   }, [track.currentTime, track.audioBuffer, zoom, offset]);
 
+  // Precompute beat times when beats change
+  useEffect(() => {
+    if (track.beats && track.beats.length > 0) {
+      setBeatTimesInSeconds(track.beats.map(beat => beat / 1000));
+    }
+  }, [track.beats]);
+
   const handleCanvasClick = (event: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
-    if (!canvas || !track.audioBuffer) return;
+    if (!canvas || !track.audioBuffer || beatTimesInSeconds.length === 0) return;
 
     // Get click position relative to canvas
     const rect = canvas.getBoundingClientRect();
@@ -208,40 +216,39 @@ export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
     const sampleAtClick = visibleStart + (visibleSamples * clickPosition);
     const timeAtClick = sampleAtClick / track.audioBuffer.sampleRate;
     
-    // Find nearest beat
-    if (track.beats && track.beats.length > 0) {
-      // Convert beats from milliseconds to seconds
-      const beatTimesInSeconds = track.beats.map(beat => beat / 1000);
-      
-      // Find the beat that starts before the clicked time
-      let selectedBeatIndex = 0;
-      for (let i = 0; i < beatTimesInSeconds.length; i++) {
-        if (beatTimesInSeconds[i] <= timeAtClick) {
-          selectedBeatIndex = i;
-        } else {
-          break;
-        }
+    // Binary search to find the nearest beat
+    let left = 0;
+    let right = beatTimesInSeconds.length - 1;
+    let selectedBeatIndex = 0;
+
+    while (left <= right) {
+      const mid = Math.floor((left + right) / 2);
+      if (beatTimesInSeconds[mid] <= timeAtClick) {
+        selectedBeatIndex = mid;
+        left = mid + 1;
+      } else {
+        right = mid - 1;
       }
-
-      // Check if this beat is a bar start (downbeat)
-      const isDownbeat = selectedBeatIndex % 4 === track.downbeatOffset;
-
-      // Get the beat time
-      const beatTime = beatTimesInSeconds[selectedBeatIndex];
-
-      // Update the track
-      track.clickedBeatIndex = selectedBeatIndex;
-      track.selectedStartTime = beatTime;
-      onPlayPause(track.id);
-
-      console.log('Clicked at time:', timeAtClick);
-      console.log('Selected beat:', {
-        index: selectedBeatIndex,
-        time: beatTime,
-        isDownbeat,
-        nextBeatTime: beatTimesInSeconds[selectedBeatIndex + 1]
-      });
     }
+
+    // Check if this beat is a bar start (downbeat)
+    const isDownbeat = selectedBeatIndex % 4 === track.downbeatOffset;
+
+    // Get the beat time
+    const beatTime = beatTimesInSeconds[selectedBeatIndex];
+
+    // Update the track
+    track.clickedBeatIndex = selectedBeatIndex;
+    track.selectedStartTime = beatTime;
+    onPlayPause(track.id);
+
+    console.log('Clicked at time:', timeAtClick);
+    console.log('Selected beat:', {
+      index: selectedBeatIndex,
+      time: beatTime,
+      isDownbeat,
+      nextBeatTime: beatTimesInSeconds[selectedBeatIndex + 1]
+    });
   };
 
   useEffect(() => {
