@@ -73,51 +73,32 @@ async function detectRawBeats(
   sampleRate: number
 ): Promise<{ detectedBeats: DetectedBeat[]; bpm: number }> {
   const { Tempo } = await aubio();
-  const tempo = new Tempo(2048, 512, sampleRate);
+
+  const frameSize = 512;
+  const hopSize   = 256;
+  const tempo = new Tempo(frameSize, hopSize, sampleRate);
   const detectedBeats: DetectedBeat[] = [];
 
-  const hopSize = 512;
-  const bufferSize = 2048;
-  const CHUNK_SIZE = 10000;
+  let totalFrames = 0;
 
-  // Process audio in chunks to avoid blocking the main thread
-  for (let chunkStart = 0; chunkStart < data.length - bufferSize; chunkStart += CHUNK_SIZE) {
-    await new Promise(resolve => setTimeout(resolve, 0)); // Yield to main thread
-
-    const chunkEnd = Math.min(chunkStart + CHUNK_SIZE, data.length - bufferSize);
-    const processBuffer = new Float32Array(bufferSize);
-
-    // Process each hop within the current chunk
-    for (let i = chunkStart; i < chunkEnd; i += hopSize) {
-      // Copy audio data into processing buffer
-      for (let j = 0; j < bufferSize; j++) {
-        processBuffer[j] = data[i + j];
-      }
-
-      // Detect beat and calculate confidence
-      const confidence = tempo.do(processBuffer);
-      
-      // Only keep beats with sufficient confidence
-      if (confidence > 0.0) {
-        const beatTimeMs = (i / sampleRate) * 1000;
-        detectedBeats.push({
-          time: beatTimeMs,
-          confidence
-        });
-      }
+  for (let i = 0; i + hopSize <= data.length; i += hopSize) {
+    const frame = data.subarray(i, i + hopSize);
+    let timeSec = i / sampleRate;
+    let confidence = tempo.do(frame);
+    if (confidence > 0.3) {
+      detectedBeats.push({
+        time: timeSec * 1000,
+        confidence
+      });
     }
+    totalFrames += hopSize;
   }
 
-  // Merge very close beats (less than 200ms apart)
-  const filteredBeats: DetectedBeat[] = [];
-  for (let i = 0; i < detectedBeats.length; i++) {
-    const current = detectedBeats[i];
-    if (i === 0 || current.time - detectedBeats[i - 1].time > 200) {
-      filteredBeats.push(current);
-    }
-  }
+  // Log beat times in seconds
+  console.log('Beat times (seconds):', detectedBeats.map(beat => (beat.time / 1000).toFixed(3)));
+
   return {
-    detectedBeats: filteredBeats,
+    detectedBeats: detectedBeats,
     bpm: tempo.getBpm()
   };
 }
@@ -304,7 +285,7 @@ export async function detectBeats(buffer: AudioBuffer): Promise<BeatDetectionRes
   console.log('Detected BPM:', bpm);
 
   // Step 3: Adjust BPM to standard range
-  let adjustedBpm = bpm;
+  let adjustedBpm = 120;
   if (adjustedBpm < 90) adjustedBpm *= 2;
   if (adjustedBpm > 180) adjustedBpm /= 2;
 
