@@ -46,22 +46,18 @@ export function useAudioPlayer() {
 
   // Helper function to adjust playback rate and pitch
   const adjustPlaybackRate = (
-    sourceNode: AudioBufferSourceNode,
-    stretchNode: any | null,
-    originalTempo: number,
-    correctionFactor: number = 1,
-    audioContext: AudioContext
+    track: Track,
+    correctionFactor: number = 1
   ) => {
-    console.log(correctionFactor)
-    const rate = (globalTempo / originalTempo) * correctionFactor;
+    if (!track.sourceNode || !track.stretchNode) return;
+    
+    const rate = (globalTempo / track.originalTempo) * correctionFactor;
     
     // Use setValueAtTime for precise timing
-    sourceNode.playbackRate.setValueAtTime(rate, audioContext.currentTime);
+    track.sourceNode.playbackRate.setValueAtTime(rate, track.audioContext.currentTime);
     
-    if (stretchNode) {
-      const semitones = -12 * Math.log2(rate);
-      stretchNode.schedule({ rate, semitones });
-    }
+    const semitones = -12 * Math.log2(rate);
+    track.stretchNode.schedule({ rate, semitones });
   };
 
   // Initialize metronome
@@ -170,7 +166,7 @@ export function useAudioPlayer() {
 
       // Initialize stretch node
       const stretchNode = await SignalsmithStretch(track.audioContext);
-      adjustPlaybackRate(sourceNode, stretchNode, track.originalTempo, 1, track.audioContext);
+      adjustPlaybackRate(track, 1);
       stretchNode.start();
 
       // Connect the audio processing chain
@@ -306,7 +302,7 @@ export function useAudioPlayer() {
     // Update track playback rates
     tracks.forEach(track => {
       if (track.sourceNode) {
-        adjustPlaybackRate(track.sourceNode, track.stretchNode, track.originalTempo, 1, track.audioContext);
+        adjustPlaybackRate(track, 1);
       }
       updateTrack(track.id, { tempo: newTempo });
     });
