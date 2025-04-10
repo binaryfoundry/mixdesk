@@ -29,8 +29,9 @@ export interface Track {
   originalTempo: number;
   downbeatOffset: number;
   clickedBeatIndex: number | null;
-  startTime: number | null;
+  startAudioContextTime: number;
   selectedStartTime: number;
+  adjustedStartTime: number;
 }
 
 export const METRONOME_BEAT_EVENT = 'metronomeBeat';
@@ -79,10 +80,11 @@ export function useAudioPlayer() {
   useEffect(() => {
     const updateTime = () => {
       tracks.forEach(track => {
-        if (track.isPlaying && track.sourceNode && track.startTime !== null) {
-          const elapsed = (track.audioContext.currentTime || 0) - track.startTime;
-          const newTime = elapsed;
-          track.currentTime = newTime;
+        if (track.isPlaying && track.sourceNode && track.startAudioContextTime !== null) {
+          const elapsed = (track.audioContext.currentTime || 0) - track.startAudioContextTime;
+          const currentTime = track.adjustedStartTime + elapsed;
+          updateTrack(track.id, { currentTime: currentTime });
+
         }
       });
       animationFrameRef.current = requestAnimationFrame(updateTime);
@@ -194,8 +196,9 @@ export function useAudioPlayer() {
           originalTempo: trackMetadata.bpm || 120,
           downbeatOffset: 0,
           clickedBeatIndex: null,
-          startTime: null,
-          selectedStartTime: 0
+          startAudioContextTime: 0,
+          selectedStartTime: 0,
+          adjustedStartTime: 0
         };
 
         // Initialize audio processing
@@ -240,15 +243,14 @@ export function useAudioPlayer() {
 
       adjustPlaybackRate(track, 1);
 
-      const nextBeatTime = metronomeRef.current?.getTimeUntilNextBeat() || 0;
-      const nextBeatTimeOffset = nextBeatTime - track.selectedStartTime;
-      const adjustedStartTime = track.audioContext.currentTime - nextBeatTimeOffset;
+      const timeUntilNextBeat = metronomeRef.current?.getTimeUntilNextBeat() || 0;
+      const adjustedStartTime = track.selectedStartTime - timeUntilNextBeat;
 
       sourceNode.start(0, adjustedStartTime);
       adjustPlaybackRate(track, 1);
 
-      track.isPlaying = true;
-      track.startTime = adjustedStartTime;
+      track.startAudioContextTime = track.audioContext.currentTime;
+      updateTrack(trackId, { isPlaying: true, adjustedStartTime: adjustedStartTime });
 
     } catch (error) {
       console.error('Error handling play/pause:', error);

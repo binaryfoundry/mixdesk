@@ -189,7 +189,7 @@ export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
     }
 
     lastPlayPosition.current = playbackPixel;
-  }, [track.currentTime, track.duration, track.audioBuffer, zoom, offset]);
+  }, [track.currentTime, track.audioBuffer, zoom, offset]);
 
   const handleCanvasClick = (event: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
@@ -249,10 +249,22 @@ export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
   }, [drawWaveform]);
 
   useEffect(() => {
+    let animationFrame: number;
+    
+    const animate = () => {
+      updatePlayPosition();
+      animationFrame = requestAnimationFrame(animate);
+    };
+
     if (track.isPlaying) {
-      const animationFrame = requestAnimationFrame(updatePlayPosition);
-      return () => cancelAnimationFrame(animationFrame);
+      animate();
     }
+
+    return () => {
+      if (animationFrame) {
+        cancelAnimationFrame(animationFrame);
+      }
+    };
   }, [track.isPlaying, updatePlayPosition]);
 
   return (
