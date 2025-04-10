@@ -33,13 +33,13 @@ export interface Track {
   originalTempo: number;
   downbeatOffset: number;
   clickedBeatIndex: number | null;
+  startTime: number | null;
+  startOffset: number | null;
 }
 
 export function useAudioPlayer() {
   const [tracks, setTracks] = useState<Track[]>([]);
   const animationFrameRef = useRef<number | null>(null);
-  const startTimeRefs = useRef<Map<string, number>>(new Map());
-  const startOffsetRefs = useRef<Map<string, number>>(new Map());
   const metronomeInitializedRef = useRef<boolean>(false);
   const metronomeRef = useRef<Metronome | null>(null);
 
@@ -82,17 +82,12 @@ export function useAudioPlayer() {
     const updateTime = () => {
       const now = Date.now();
       tracks.forEach(track => {
-        if (track.isPlaying && track.sourceNode) {
-          const startTime = startTimeRefs.current.get(track.id);
-          const startOffset = startOffsetRefs.current.get(track.id);
-          
-          if (startTime !== undefined && startOffset !== undefined) {
-            const elapsed = (track.audioContext.currentTime || 0) - startTime;
-            const newTime = startOffset + elapsed;
+        if (track.isPlaying && track.sourceNode && track.startTime !== null && track.startOffset !== null) {
+          const elapsed = (track.audioContext.currentTime || 0) - track.startTime;
+          const newTime = track.startOffset + elapsed;
 
-            if (isFinite(newTime) && newTime >= 0 && newTime <= track.duration) {
-              updateTrack(track.id, { currentTime: newTime });
-            }
+          if (isFinite(newTime) && newTime >= 0 && newTime <= track.duration) {
+            updateTrack(track.id, { currentTime: newTime });
           }
         }
       });
@@ -203,7 +198,9 @@ export function useAudioPlayer() {
           tempo: 120,
           originalTempo: trackMetadata.bpm || 120,
           downbeatOffset: 0,
-          clickedBeatIndex: null
+          clickedBeatIndex: null,
+          startTime: null,
+          startOffset: null
         };
 
         // Initialize audio processing
@@ -245,7 +242,11 @@ export function useAudioPlayer() {
         if (track.sourceNode) {
           track.sourceNode.stop();
         }
-        updateTrack(track.id, { isPlaying: false });
+        updateTrack(track.id, { 
+          isPlaying: false,
+          startTime: null,
+          startOffset: null
+        });
       } else {
         // Start playback
         const sourceNode = track.audioContext.createBufferSource();
@@ -258,12 +259,11 @@ export function useAudioPlayer() {
         
         sourceNode.start(0, startOffset);
         
-        startTimeRefs.current.set(track.id, startTime);
-        startOffsetRefs.current.set(track.id, startOffset);
-        
         updateTrack(track.id, {
           sourceNode,
-          isPlaying: true
+          isPlaying: true,
+          startTime,
+          startOffset
         });
       }
     } catch (error) {
