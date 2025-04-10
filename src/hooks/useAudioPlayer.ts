@@ -40,13 +40,7 @@ export function useAudioPlayer() {
   const animationFrameRef = useRef<number | null>(null);
   const startTimeRefs = useRef<Map<string, number>>(new Map());
   const startOffsetRefs = useRef<Map<string, number>>(new Map());
-  const metronomeContextRef = useRef<AudioContext | null>(null);
-  const metronomeNodeRef = useRef<AudioWorkletNode | null>(null);
-  const currentTempoRef = useRef<number>(120);
   const metronomeInitializedRef = useRef<boolean>(false);
-  const lastBeatTimeRef = useRef<number>(0);
-  const expectedNextBeatTimeRef = useRef<number>(0);
-  const lastCorrectionTimeRef = useRef<number>(0);
 
   // Helper function to adjust playback rate and pitch
   const adjustPlaybackRate = (
@@ -115,116 +109,13 @@ export function useAudioPlayer() {
     const initMetronome = async () => {
       if (metronomeInitializedRef.current) return;
       metronomeInitializedRef.current = true;
-
-      try {
-        const context = new (window.AudioContext || (window as any).webkitAudioContext)();
-        await context.audioWorklet.addModule('/audio-worklet/MetronomeProcessor.js');
-        
-        const metronomeNode = new AudioWorkletNode(context, 'metronome-processor');
-        metronomeNode.connect(context.destination);
-        
-        metronomeNode.port.onmessage = (event) => {
-          if (event.data.type === 'beat') {
-            const currentTime = event.data.time;
-            const beatNumber = event.data.beatNumber;
-            
-            // Calculate expected next beat time
-            const secondsPerBeat = 60.0 / currentTempoRef.current;
-            expectedNextBeatTimeRef.current = currentTime + secondsPerBeat;
-            lastBeatTimeRef.current = currentTime;
-
-            const beatEvent = new CustomEvent(METRONOME_BEAT_EVENT, {
-              detail: {
-                beatNumber,
-                time: currentTime,
-                isDownbeat: beatNumber === 1
-              }
-            });
-            metronomeEmitter.dispatchEvent(beatEvent);
-          }
-        };
-        
-        metronomeContextRef.current = context;
-        metronomeNodeRef.current = metronomeNode;
-        currentTempoRef.current = globalTempo;
-
-        // Start the metronome
-        metronomeNode.port.postMessage({ type: 'start' });
-      } catch (error) {
-        console.error('Error initializing metronome:', error);
-      }
     };
 
     initMetronome();
 
-    return () => {
-      if (metronomeNodeRef.current) {
-        metronomeNodeRef.current.port.postMessage({ type: 'stop' });
-        metronomeNodeRef.current.disconnect();
-      }
-      if (metronomeContextRef.current && metronomeContextRef.current.state !== 'closed') {
-        metronomeContextRef.current.close();
-      }
-    };
+    return () => {};
   }, []);
 
-  // Handle metronome synchronization
-  useEffect(() => {
-    const handleMetronomeBeat = (event: Event) => {
-      const beatEvent = event as CustomEvent;
-      const currentTime = beatEvent.detail.time;
-      
-      // Adjust all playing tracks to stay in sync
-      tracks.forEach(track => {
-        if (track.isPlaying && track.sourceNode) {
-          const startTime = startTimeRefs.current.get(track.id);
-          const startOffset = startOffsetRefs.current.get(track.id);
-          
-          if (startTime !== undefined && startOffset !== undefined) {
-            const elapsed = currentTime - startTime;
-            const expectedPosition = startOffset + elapsed;
-            const actualPosition = track.currentTime;
-            
-            // Calculate correction factor to gradually bring the audio back in sync
-            const timeToNextBeat = expectedNextBeatTimeRef.current - currentTime;
-            const timeSinceLastCorrection = currentTime - lastCorrectionTimeRef.current;
-            
-            // More aggressive correction if we're further out of sync
-            const syncError = expectedPosition - actualPosition;
-            const correctionStrength = Math.min(1, Math.abs(syncError) * 2);
-            
-            // Calculate correction factor with smoothing
-            const correctionFactor = 1 + (syncError / timeToNextBeat) * correctionStrength;
-            
-            // Apply correction with exponential smoothing
-            const smoothingFactor = 0.3;
-            const smoothedCorrection = 1 + (correctionFactor - 1) * smoothingFactor;
-            
-            // Adjust the playback rate with the smoothed correction
-            adjustPlaybackRate(track.sourceNode, track.stretchNode, track.originalTempo, smoothedCorrection, track.audioContext);
-            
-            lastCorrectionTimeRef.current = currentTime;
-          }
-        }
-      });
-    };
-
-    metronomeEmitter.addEventListener(METRONOME_BEAT_EVENT, handleMetronomeBeat);
-    return () => {
-      metronomeEmitter.removeEventListener(METRONOME_BEAT_EVENT, handleMetronomeBeat);
-    };
-  }, [tracks]);
-
-  // Update tempo when globalTempo changes
-  useEffect(() => {
-    if (metronomeNodeRef.current) {
-      metronomeNodeRef.current.port.postMessage({
-        type: 'tempo',
-        tempo: globalTempo
-      });
-    }
-    currentTempoRef.current = globalTempo;
-  }, [globalTempo]);
 
   const initAudio = async () => {
     try {
