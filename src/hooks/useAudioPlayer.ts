@@ -31,6 +31,7 @@ export interface Track {
   tempo: number;
   originalTempo: number;
   downbeatOffset: number;
+  clickedBeatIndex: number | null;
 }
 
 export function useAudioPlayer() {
@@ -319,7 +320,8 @@ export function useAudioPlayer() {
           volume: 1,
           tempo: 120,
           originalTempo: trackMetadata.bpm || 120,
-          downbeatOffset: 0
+          downbeatOffset: 0,
+          clickedBeatIndex: null
         };
 
         // Initialize audio processing

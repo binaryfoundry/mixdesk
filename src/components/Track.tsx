@@ -23,7 +23,6 @@ export function Track({ track, onPlayPause, onVolumeChange, metronomeEmitter }: 
   const [isLoading, setIsLoading] = useState(true);
   const [zoom, setZoom] = useState(1);  // Zoom factor, 1 = normal, >1 = zoomed in
   const [offset, setOffset] = useState(0);  // Horizontal offset, 0 = start, 1 = end
-  const [clickedBeatIndex, setClickedBeatIndex] = useState<number | null>(null);
   const lastPlayPosition = useRef<number>(0);
 
   const drawWaveform = useCallback(() => {
@@ -132,7 +131,7 @@ export function Track({ track, onPlayPause, onVolumeChange, metronomeEmitter }: 
         // Only draw if at least part of the rectangle is visible
         if (x2 > 0 && x1 < canvas.width) {
           // Use highlight color for clicked beat, otherwise use alternating colors
-          if (i === clickedBeatIndex) {
+          if (i === track.clickedBeatIndex) {
             ctx.fillStyle = highlightColor;
           } else {
             ctx.fillStyle = i % 2 === 0 ? darkGrey : lightGrey;
@@ -153,7 +152,7 @@ export function Track({ track, onPlayPause, onVolumeChange, metronomeEmitter }: 
         }
       }
     }
-  }, [track.audioBuffer, track.beats, track.duration, track.downbeatOffset, zoom, offset, clickedBeatIndex]);
+  }, [track.audioBuffer, track.beats, track.duration, track.downbeatOffset, track.clickedBeatIndex, zoom, offset]);
 
   const updatePlayPosition = useCallback(() => {
     const overlay = overlayRef.current;
@@ -228,14 +227,12 @@ export function Track({ track, onPlayPause, onVolumeChange, metronomeEmitter }: 
       // Check if this beat is a bar start (downbeat)
       const isDownbeat = selectedBeatIndex % 4 === track.downbeatOffset;
 
-      // Update clicked beat index
-      setClickedBeatIndex(selectedBeatIndex);
-
       // Get the beat time
       const beatTime = beatTimesInSeconds[selectedBeatIndex];
 
-      // Update the track's current time
+      // Update the track's current time and clicked beat index
       track.currentTime = beatTime;
+      track.clickedBeatIndex = selectedBeatIndex;
 
       onPlayPause(track.id);
 
