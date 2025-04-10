@@ -241,20 +241,11 @@ export function useAudioPlayer() {
       // Start playback
       const sourceNode = track.audioContext.createBufferSource();
       sourceNode.buffer = track.audioBuffer;
-      
-      // Calculate and set the playback rate before connecting and starting
-      const rate = (metronomeRef.current?.getTempo() || 120) / track.originalTempo;
-      sourceNode.playbackRate.value = rate;
-      
       sourceNode.connect(track.stretchNode!);
       track.sourceNode = sourceNode;
 
-      // Ensure the stretch node is also updated
-      if (track.stretchNode) {
-        const semitones = -12 * Math.log2(rate);
-        track.stretchNode.schedule({ rate, semitones });
-      }
-      
+      adjustPlaybackRate(track, 1);
+
       const startTime = track.audioContext.currentTime;
       const nextBeatTime = metronomeRef.current?.getTimeUntilNextBeat() || 0;
       const startOffset = track.currentTime - nextBeatTime;
