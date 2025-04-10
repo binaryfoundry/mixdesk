@@ -4,10 +4,6 @@ import SignalsmithStretch from 'signalsmith-stretch';
 import { detectBeats } from '../utils/beatDetection';
 import { Metronome } from '../Metronome';
 
-// Create an event emitter for metronome beats
-const metronomeEmitter = new EventTarget();
-export const METRONOME_BEAT_EVENT = 'metronomeBeat';
-
 interface TrackMetadata {
   title: string;
   key: string;
@@ -36,6 +32,8 @@ export interface Track {
   startTime: number | null;
   startOffset: number | null;
 }
+
+export const METRONOME_BEAT_EVENT = 'metronomeBeat';
 
 export function useAudioPlayer() {
   const [tracks, setTracks] = useState<Track[]>([]);
@@ -292,7 +290,6 @@ export function useAudioPlayer() {
     handlePlayPause,
     handleVolumeChange,
     handleTempoChange,
-    metronomeEmitter,
     metronome: metronomeRef.current
   };
 }

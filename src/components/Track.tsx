@@ -8,16 +8,15 @@ import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import VolumeUpIcon from '@mui/icons-material/VolumeUp';
 
 // Local imports
-import { Track as TrackType, METRONOME_BEAT_EVENT } from '../hooks/useAudioPlayer';
+import { Track as TrackType } from '../hooks/useAudioPlayer';
 
 interface TrackProps {
   track: TrackType;
   onPlayPause: (trackId: string) => void;
   onVolumeChange: (trackId: string, value: number | number[]) => void;
-  metronomeEmitter: EventTarget;
 }
 
-export function Track({ track, onPlayPause, onVolumeChange, metronomeEmitter }: TrackProps) {
+export function Track({ track, onPlayPause, onVolumeChange }: TrackProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const overlayRef = useRef<HTMLCanvasElement>(null);
   const [isLoading, setIsLoading] = useState(true);
