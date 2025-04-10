@@ -62,14 +62,19 @@ async function detectRawBeats(
 ): Promise<{ detectedBeats: DetectedBeat[]; bpm: number }> {
   const { Tempo } = await aubio();
 
-  const frameSize = 512;
-  const hopSize   = 256;
+  const frameSize = 1024;
+  const hopSize   = 64;
   const tempo = new Tempo(frameSize, hopSize, sampleRate);
   const detectedBeats: DetectedBeat[] = [];
 
   let totalFrames = 0;
+  const YIELD_INTERVAL = 1000; // Yield every 1000 frames
 
   for (let i = 0; i + hopSize <= data.length; i += hopSize) {
+    if (totalFrames % YIELD_INTERVAL === 0) {
+      await new Promise(resolve => setTimeout(resolve, 0)); // Yield to main thread
+    }
+
     const frame = data.subarray(i, i + hopSize);
     let timeSec = i / sampleRate;
     let confidence = tempo.do(frame);
