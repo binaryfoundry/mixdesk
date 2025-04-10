@@ -148,8 +148,8 @@ export function useAudioPlayer() {
 
       // Initialize stretch node
       const stretchNode = await SignalsmithStretch(track.audioContext);
-      adjustPlaybackRate(track, 1);
       stretchNode.start();
+      adjustPlaybackRate(track, 1);
 
       // Connect the audio processing chain
       sourceNode.connect(stretchNode);
@@ -266,7 +266,8 @@ export function useAudioPlayer() {
         const startOffset = track.currentTime;
         
         sourceNode.start(0, startOffset);
-
+        adjustPlaybackRate(track, 1);
+        
         track.isPlaying = true;
         track.startTime = startTime;
         track.startOffset = startOffset;
