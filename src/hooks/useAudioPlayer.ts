@@ -156,11 +156,12 @@ export function useAudioPlayer() {
       if (track.gainNode) {
         stretchNode.connect(track.gainNode);
       }
-
-      return { sourceNode, stretchNode };
+      track.sourceNode = sourceNode;
+      track.stretchNode = stretchNode;
+      return;
     } catch (error) {
       console.error('Error initializing audio processing:', error);
-      return null;
+      return;
     }
   };
 
@@ -204,11 +205,7 @@ export function useAudioPlayer() {
         };
 
         // Initialize audio processing
-        const processing = await initAudioProcessing(newTrack);
-        if (processing) {
-          newTrack.sourceNode = processing.sourceNode;
-          newTrack.stretchNode = processing.stretchNode;
-        }
+        await initAudioProcessing(newTrack);
 
         if (newTrack.gainNode) {
           newTrack.gainNode.gain.value = newTrack.volume;
