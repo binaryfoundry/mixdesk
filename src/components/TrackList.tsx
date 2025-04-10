@@ -6,10 +6,9 @@ interface TrackListProps {
   tracks: TrackType[];
   onPlayPause: (trackId: string) => void;
   onVolumeChange: (trackId: string, value: number | number[]) => void;
-  metronomeEmitter: EventTarget;
 }
 
-export function TrackList({ tracks, onPlayPause, onVolumeChange, metronomeEmitter }: TrackListProps) {
+export function TrackList({ tracks, onPlayPause, onVolumeChange }: TrackListProps) {
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
       {tracks.map(track => (
@@ -18,7 +17,6 @@ export function TrackList({ tracks, onPlayPause, onVolumeChange, metronomeEmitte
           track={track}
           onPlayPause={onPlayPause}
           onVolumeChange={onVolumeChange}
-          metronomeEmitter={metronomeEmitter}
         />
       ))}
     </Box>

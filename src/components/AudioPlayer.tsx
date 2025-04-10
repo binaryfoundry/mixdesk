@@ -1,5 +1,5 @@
 // Material-UI imports
-import { Box, Button, Paper } from '@mui/material';
+import { Box, Button, Paper, Typography } from '@mui/material';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
 
 // Local imports
@@ -14,7 +14,8 @@ export default function AudioPlayer() {
     handlePlayPause,
     handleVolumeChange,
     handleTempoChange,
-    metronome
+    metronome,
+    error
   } = useAudioPlayer();
 
   return (
@@ -28,6 +29,17 @@ export default function AudioPlayer() {
       boxSizing: 'border-box',
       overflow: 'hidden'
     }}>
+      {error && (
+        <Box sx={{
+          p: 2,
+          mb: 2,
+          backgroundColor: 'error.light',
+          color: 'error.contrastText',
+          borderRadius: 1
+        }}>
+          <Typography variant="body2">{error}</Typography>
+        </Box>
+      )}
       <Box sx={{
         display: 'flex',
         flexDirection: 'column',

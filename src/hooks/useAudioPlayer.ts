@@ -38,16 +38,29 @@ export const METRONOME_BEAT_EVENT = 'metronomeBeat';
 
 export function useAudioPlayer() {
   const [tracks, setTracks] = useState<Track[]>([]);
+  const [error, setError] = useState<string | null>(null);
   const animationFrameRef = useRef<number | null>(null);
   const metronomeInitializedRef = useRef<boolean>(false);
-  const metronomeRef = useRef<Metronome | null>(null);
+  const metronomeRef = useRef<Metronome>(new Metronome(120));
 
   // Initialize metronome only once
-  if (!metronomeInitializedRef.current) {
-    metronomeRef.current = new Metronome(120);
-    metronomeRef.current.start();
-    metronomeInitializedRef.current = true;
-  }
+  useEffect(() => {
+    const initializeMetronome = async () => {
+      if (!metronomeInitializedRef.current) {
+        try {
+          metronomeInitializedRef.current = true;
+          await metronomeRef.current.initialize();
+          await metronomeRef.current.start();
+          setError(null);
+        } catch (err) {
+          console.error('Failed to initialize metronome:', err);
+          setError(err instanceof Error ? err.message : 'Failed to initialize metronome');
+          metronomeInitializedRef.current = false;
+        }
+      }
+    };
+    initializeMetronome();
+  }, [metronomeRef]);
 
   // Helper function to adjust playback rate and pitch
   const adjustPlaybackRate = (
@@ -245,7 +258,7 @@ export function useAudioPlayer() {
 
       const timeUntilNextBeat = metronomeRef.current?.getTimeUntilNextBeat() || 0;
       const adjustedStartTime = track.selectedStartTime - timeUntilNextBeat;
-
+      console.log(timeUntilNextBeat);
       sourceNode.start(0, adjustedStartTime);
       adjustPlaybackRate(track, 1);
 
@@ -287,6 +300,7 @@ export function useAudioPlayer() {
     handlePlayPause,
     handleVolumeChange,
     handleTempoChange,
-    metronome: metronomeRef.current
+    metronome: metronomeRef.current,
+    error
   };
 }
