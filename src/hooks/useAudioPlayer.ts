@@ -248,8 +248,22 @@ export function useAudioPlayer() {
         // Start playback
         const sourceNode = track.audioContext.createBufferSource();
         sourceNode.buffer = track.audioBuffer;
+        
+        // Calculate and set the playback rate before connecting and starting
+        const rate = (metronomeRef.current?.getTempo() || 120) / track.originalTempo;
+        sourceNode.playbackRate.value = rate;
+        
         sourceNode.connect(track.stretchNode!);
-        adjustPlaybackRate(track, 1);
+        
+        updateTrack(track.id, {
+          sourceNode
+        });
+
+        // Ensure the stretch node is also updated
+        if (track.stretchNode) {
+          const semitones = -12 * Math.log2(rate);
+          track.stretchNode.schedule({ rate, semitones });
+        }
         
         const startTime = track.audioContext.currentTime;
         const startOffset = track.currentTime;
@@ -257,7 +271,6 @@ export function useAudioPlayer() {
         sourceNode.start(0, startOffset);
         
         updateTrack(track.id, {
-          sourceNode,
           isPlaying: true,
           startTime,
           startOffset
