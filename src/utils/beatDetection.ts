@@ -278,7 +278,7 @@ export async function detectBeats(buffer: AudioBuffer): Promise<BeatDetectionRes
   console.log('Detected BPM:', bpm);
 
   // Step 3: Adjust BPM to standard range
-  let adjustedBpm = 120;
+  let adjustedBpm = bpm;
   if (adjustedBpm < 90) adjustedBpm *= 2;
   if (adjustedBpm > 180) adjustedBpm /= 2;
 
