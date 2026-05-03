@@ -231,11 +231,68 @@ bool testFullMixPreferredWhenAllPublicStemsEnabled()
     stems.drums.audio.setSample(channel, sample, 123.0f);
 
     mixdesk::model::StemEnableState enabled;
+    const auto usesFullMixAtUnity = mixdesk::engine::canUseFullMixForPlayback(stems, enabled);
     const auto playbackSample = mixdesk::engine::mixPreparedStemsAtSample(stems, enabled, channel, sample);
+    enabled.drumsVolume = 0.5f;
+    const auto adjustedSample = mixdesk::engine::mixPreparedStemsAtSample(stems, enabled, channel, sample);
+    const auto expectedAdjustedSample = (stems.drums.audio.getSample(channel, sample) * enabled.drumsVolume)
+        + stems.bass.audio.getSample(channel, sample)
+        + stems.musicResidual.audio.getSample(channel, sample)
+        + stems.vocals.audio.getSample(channel, sample);
 
     return expect(result.succeeded, "reconciliation for FullMix preference succeeds")
-        && expect(mixdesk::engine::canUseFullMixForPlayback(stems, enabled), "FullMix is selected when all public stems are enabled")
-        && expect(std::abs(playbackSample - fullMixSample) < tolerance, "playback uses FullMix instead of reconstructed stems");
+        && expect(usesFullMixAtUnity, "FullMix is selected when all public stems are enabled")
+        && expect(std::abs(playbackSample - fullMixSample) < tolerance, "playback uses FullMix instead of reconstructed stems")
+        && expect(! mixdesk::engine::canUseFullMixForPlayback(stems, enabled), "stem volume change disables FullMix shortcut")
+        && expect(std::abs(adjustedSample - expectedAdjustedSample) < tolerance, "stem volume changes reconstructed playback level");
+}
+
+float totalStemVolume(const mixdesk::model::WorkspaceState& state, StemType stemType)
+{
+    auto total = 0.0f;
+    for (const auto& deck : state.decks)
+        if (deck.loadedTrack.has_value())
+            total += mixdesk::model::stemVolume(deck.stemEnabled, stemType);
+    return total;
+}
+
+bool testStemVolumesBalanceAcrossLoadedDecks()
+{
+    mixdesk::model::WorkspaceState state;
+    state.decks.resize(3);
+    state.decks[0].id = mixdesk::model::DeckId::A;
+    state.decks[1].id = mixdesk::model::DeckId::B;
+    state.decks[2].id = mixdesk::model::DeckId::C;
+
+    state.decks[0].loadedTrack = mixdesk::model::LoadedTrack {};
+    mixdesk::model::balanceStemVolumesForLoadedDeck(state, mixdesk::model::DeckId::A);
+
+    state.decks[1].loadedTrack = mixdesk::model::LoadedTrack {};
+    mixdesk::model::balanceStemVolumesForLoadedDeck(state, mixdesk::model::DeckId::B);
+
+    mixdesk::model::setStemVolumeAcrossLoadedDecks(state, mixdesk::model::DeckId::A, StemType::Drums, 0.8f);
+
+    const auto twoDeckTotal = totalStemVolume(state, StemType::Drums);
+    const auto deckADrums = mixdesk::model::stemVolume(state.decks[0].stemEnabled, StemType::Drums);
+    const auto deckBDrums = mixdesk::model::stemVolume(state.decks[1].stemEnabled, StemType::Drums);
+
+    state.decks[2].loadedTrack = mixdesk::model::LoadedTrack {};
+    mixdesk::model::balanceStemVolumesForLoadedDeck(state, mixdesk::model::DeckId::C);
+    const auto threeDeckTotal = totalStemVolume(state, StemType::Drums);
+
+    mixdesk::model::setStemVolumeAcrossLoadedDecks(state, mixdesk::model::DeckId::C, StemType::Drums, 1.0f);
+    const auto deckCFullTotal = totalStemVolume(state, StemType::Drums);
+    const auto deckCDrums = mixdesk::model::stemVolume(state.decks[2].stemEnabled, StemType::Drums);
+    const auto otherDrums = mixdesk::model::stemVolume(state.decks[0].stemEnabled, StemType::Drums)
+        + mixdesk::model::stemVolume(state.decks[1].stemEnabled, StemType::Drums);
+
+    return expect(std::abs(twoDeckTotal - 1.0f) < tolerance, "two loaded deck stem total is one")
+        && expect(std::abs(deckADrums - 0.8f) < tolerance, "raising one stem keeps requested level")
+        && expect(std::abs(deckBDrums - 0.2f) < tolerance, "raising one stem ducks matching stem on other deck")
+        && expect(std::abs(threeDeckTotal - 1.0f) < tolerance, "loading third deck keeps stem total at one")
+        && expect(std::abs(deckCFullTotal - 1.0f) < tolerance, "full stem ownership still totals one")
+        && expect(std::abs(deckCDrums - 1.0f) < tolerance, "raised deck owns full stem")
+        && expect(std::abs(otherDrums) < tolerance, "other matching stems are ducked to zero");
 }
 } // namespace
 
@@ -248,6 +305,7 @@ int main()
     failures += testMismatchedFormatsFailClearly() ? 0 : 1;
     failures += testPlaybackDoesNotUseComplementStemsAsPublicMix() ? 0 : 1;
     failures += testFullMixPreferredWhenAllPublicStemsEnabled() ? 0 : 1;
+    failures += testStemVolumesBalanceAcrossLoadedDecks() ? 0 : 1;
 
     if (failures == 0)
     {

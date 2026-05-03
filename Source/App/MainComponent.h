@@ -39,6 +39,7 @@ private:
     void configureDeckGridPlayback(model::DeckId deckId);
     void setTransportGridBarPosition(double gridBarPosition);
     void updateDeckPlayingState();
+    void syncStemControlsToPlayback();
     [[nodiscard]] engine::DeckPlaybackEngine& playbackEngineFor(model::DeckId deckId) noexcept;
     [[nodiscard]] const engine::DeckPlaybackEngine& playbackEngineFor(model::DeckId deckId) const noexcept;
     [[nodiscard]] std::optional<double> firstPlayingGridBarPosition() const;

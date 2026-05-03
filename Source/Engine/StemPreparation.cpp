@@ -999,7 +999,9 @@ model::StemSet createModelStemSet(const PreparedStemSet& stems)
 
 bool canUseFullMixForPlayback(const PreparedStemSet& stems, const model::StemEnableState& enabled) noexcept
 {
-    return stems.fullMix.hasAudio() && model::areAllPublicStemsEnabled(enabled);
+    return stems.fullMix.hasAudio()
+        && model::areAllPublicStemsEnabled(enabled)
+        && model::areAllPublicStemVolumesUnity(enabled);
 }
 
 float mixPreparedStemsAtSample(const PreparedStemSet& stems,
@@ -1010,10 +1012,10 @@ float mixPreparedStemsAtSample(const PreparedStemSet& stems,
     if (canUseFullMixForPlayback(stems, enabled))
         return sampleAtIndex(stems.fullMix, channel, sampleIndex);
 
-    return (enabled.drums ? sampleAtIndex(stems.drums, channel, sampleIndex) : 0.0f)
-        + (enabled.bass ? sampleAtIndex(stems.bass, channel, sampleIndex) : 0.0f)
-        + (enabled.music ? sampleAtIndex(stems.musicResidual, channel, sampleIndex) : 0.0f)
-        + (enabled.vocals ? sampleAtIndex(stems.vocals, channel, sampleIndex) : 0.0f);
+    return (enabled.drums ? sampleAtIndex(stems.drums, channel, sampleIndex) * enabled.drumsVolume : 0.0f)
+        + (enabled.bass ? sampleAtIndex(stems.bass, channel, sampleIndex) * enabled.bassVolume : 0.0f)
+        + (enabled.music ? sampleAtIndex(stems.musicResidual, channel, sampleIndex) * enabled.musicVolume : 0.0f)
+        + (enabled.vocals ? sampleAtIndex(stems.vocals, channel, sampleIndex) * enabled.vocalsVolume : 0.0f);
 }
 
 double stemDurationSeconds(const StemAudioBuffer& stem) noexcept

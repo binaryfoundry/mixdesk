@@ -68,6 +68,7 @@ void WorkspaceController::apply(const SetDeckLoadedTrackCommand& command)
     deck->beatGrid = command.beatGrid;
     deck->stemWaveforms = command.stemWaveforms;
     deck->blocks = command.phraseBlocks;
+    model::balanceStemVolumesForLoadedDeck(state, command.deckId);
 
     if (command.beatGrid.bpm > 0)
         state.bpm = static_cast<double>(command.beatGrid.bpm);
@@ -91,6 +92,15 @@ void WorkspaceController::apply(const SetDeckStemEnabledCommand& command)
         return;
 
     model::setStemEnabled(deck->stemEnabled, command.stemType, command.enabled);
+}
+
+void WorkspaceController::apply(const SetDeckStemVolumeCommand& command)
+{
+    auto* deck = model::findDeck(state, command.deckId);
+    if (deck == nullptr)
+        return;
+
+    model::setStemVolumeAcrossLoadedDecks(state, command.deckId, command.stemType, command.volume);
 }
 
 void WorkspaceController::apply(const SetCurrentBarPositionCommand& command)

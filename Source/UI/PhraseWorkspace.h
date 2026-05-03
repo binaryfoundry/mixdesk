@@ -19,6 +19,7 @@ public:
     using RoleChangeCallback = std::function<void(model::DeckId, model::DeckRole)>;
     using PlaybackToggleCallback = std::function<void()>;
     using StemToggleCallback = std::function<void(model::DeckId, model::StemType, bool)>;
+    using StemVolumeCallback = std::function<void(model::DeckId, model::StemType, float)>;
     using MasterVolumeCallback = std::function<void(float)>;
     using BpmChangeCallback = std::function<void(double)>;
     using TrackLoadRequestCallback = std::function<void(model::DeckId, int)>;
@@ -44,6 +45,7 @@ public:
     RoleChangeCallback onRoleChangeRequested;
     PlaybackToggleCallback onPlaybackToggleRequested;
     StemToggleCallback onStemToggleRequested;
+    StemVolumeCallback onStemVolumeChanged;
     MasterVolumeCallback onMasterVolumeChanged;
     BpmChangeCallback onBpmChanged;
     TrackLoadRequestCallback onTrackLoadRequested;
@@ -75,6 +77,13 @@ private:
         model::StemType stemType { model::StemType::Drums };
     };
 
+    struct HitStemVolume
+    {
+        std::size_t deckIndex {};
+        model::DeckId deckId {};
+        model::StemType stemType { model::StemType::Drums };
+    };
+
     struct ActiveDrag
     {
         int sourceIndex {};
@@ -94,6 +103,14 @@ private:
         float dragStartX {};
         int originalLaunchOffsetBars {};
         int previewLaunchOffsetBars {};
+    };
+
+    struct ActiveStemVolumeDrag
+    {
+        int sourceIndex {};
+        std::size_t deckIndex {};
+        model::DeckId deckId {};
+        model::StemType stemType { model::StemType::Drums };
     };
 
     struct PointerContact
@@ -126,6 +143,8 @@ private:
     juce::Rectangle<float> getControlBounds() const;
     juce::Rectangle<float> getDeckLabelBounds(std::size_t deckIndex) const;
     juce::Rectangle<float> getStemToggleBounds(std::size_t deckIndex, model::StemType stemType) const;
+    juce::Rectangle<float> getStemToggleButtonBounds(std::size_t deckIndex, model::StemType stemType) const;
+    juce::Rectangle<float> getStemVolumeTrackBounds(std::size_t deckIndex, model::StemType stemType) const;
     juce::Rectangle<float> getLaneBounds(std::size_t deckIndex) const;
     juce::Rectangle<float> getBlockBounds(std::size_t deckIndex, std::size_t blockIndex) const;
     juce::Rectangle<float> getLoadedTrackBounds(std::size_t deckIndex) const;
@@ -153,6 +172,7 @@ private:
     std::optional<HitBlock> hitTestBlock(juce::Point<float> position) const;
     std::optional<HitTrack> hitTestLoadedTrack(juce::Point<float> position) const;
     std::optional<HitStemToggle> hitTestStemToggle(juce::Point<float> position) const;
+    std::optional<HitStemVolume> hitTestStemVolume(juce::Point<float> position) const;
     std::optional<model::DeckId> hitTestDeck(juce::Point<float> position) const;
     bool isOverLoadedTrack(juce::Point<float> position) const;
     bool isEmptyTrackLoadTarget(juce::Point<float> position) const;
@@ -164,6 +184,8 @@ private:
     void updateButtonText();
 
     ConflictFlags detectConflictForBlock(std::size_t deckIndex, std::size_t blockIndex) const;
+    float stemVolumeForY(std::size_t deckIndex, model::StemType stemType, float y) const;
+    void setStemVolumeFromPoint(std::size_t deckIndex, model::DeckId deckId, model::StemType stemType, juce::Point<float> position);
     float volumeForX(float x) const;
     void setMasterVolumeFromPoint(juce::Point<float> position);
     double bpmForX(float x) const;
@@ -177,6 +199,7 @@ private:
     std::optional<std::size_t> selectedBlockIndex;
     std::optional<ActiveDrag> activeDrag;
     std::optional<ActiveTrackDrag> activeTrackDrag;
+    std::optional<ActiveStemVolumeDrag> activeStemVolumeDrag;
     std::optional<PendingTrackLoadMarker> pendingTrackLoadMarker;
     std::optional<int> activeBpmDragSource;
     std::optional<int> activeVolumeDragSource;

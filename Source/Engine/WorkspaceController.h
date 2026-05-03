@@ -53,6 +53,13 @@ struct SetDeckStemEnabledCommand
     bool enabled { true };
 };
 
+struct SetDeckStemVolumeCommand
+{
+    model::DeckId deckId {};
+    model::StemType stemType { model::StemType::Drums };
+    float volume { 1.0f };
+};
+
 struct SetCurrentBarPositionCommand
 {
     double barPosition {};
@@ -76,6 +83,7 @@ using WorkspaceCommand = std::variant<
     SetDeckLoadedTrackCommand,
     SetDeckPlayingCommand,
     SetDeckStemEnabledCommand,
+    SetDeckStemVolumeCommand,
     SetCurrentBarPositionCommand,
     SetMasterVolumeCommand,
     SetBpmCommand>;
@@ -96,6 +104,7 @@ private:
     void apply(const SetDeckLoadedTrackCommand& command);
     void apply(const SetDeckPlayingCommand& command);
     void apply(const SetDeckStemEnabledCommand& command);
+    void apply(const SetDeckStemVolumeCommand& command);
     void apply(const SetCurrentBarPositionCommand& command);
     void apply(const SetMasterVolumeCommand& command);
     void apply(const SetBpmCommand& command);

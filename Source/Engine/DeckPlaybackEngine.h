@@ -27,6 +27,7 @@ public:
     void setLaunchOffsetBars(int launchOffsetBars);
     void setCurrentGridBarPosition(double gridBarPosition);
     void setStemEnabled(model::StemType stemType, bool enabled);
+    void setStemVolume(model::StemType stemType, float volume);
     void setMasterVolume(float volume);
 
     [[nodiscard]] bool isPlaying() const;

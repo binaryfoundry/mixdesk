@@ -1,9 +1,37 @@
 #include "PhraseModel.h"
 
 #include <algorithm>
+#include <array>
+#include <cmath>
 
 namespace mixdesk::model
 {
+namespace
+{
+constexpr std::array publicVolumeStemTypes { StemType::Drums, StemType::Bass, StemType::MusicResidual, StemType::Vocals };
+
+bool loadedDeckParticipates(const DeckTimeline& deck) noexcept
+{
+    return deck.loadedTrack.has_value();
+}
+
+std::size_t loadedDeckCount(const WorkspaceState& state) noexcept
+{
+    return static_cast<std::size_t>(std::count_if(state.decks.begin(),
+        state.decks.end(),
+        [](const DeckTimeline& deck) { return loadedDeckParticipates(deck); }));
+}
+
+void setEqualStemVolumesAcrossLoadedDecks(WorkspaceState& state, StemType stemType, std::size_t count) noexcept
+{
+    const auto equalVolume = count > 0 ? 1.0f / static_cast<float>(count) : 0.0f;
+
+    for (auto& deck : state.decks)
+        if (loadedDeckParticipates(deck))
+            setStemVolume(deck.stemEnabled, stemType, equalVolume);
+}
+} // namespace
+
 std::string_view toString(DeckId deckId) noexcept
 {
     switch (deckId)
@@ -163,6 +191,50 @@ void setStemEnabled(StemEnableState& stemState, StemType stemType, bool enabled)
     }
 }
 
+float stemVolume(const StemEnableState& stemState, StemType stemType) noexcept
+{
+    switch (stemType)
+    {
+        case StemType::FullMix: return areAllPublicStemVolumesUnity(stemState) ? 1.0f : 0.0f;
+        case StemType::Drums: return stemState.drumsVolume;
+        case StemType::Bass: return stemState.bassVolume;
+        case StemType::Vocals: return stemState.vocalsVolume;
+        case StemType::InstrumentalOriginal: return 0.0f;
+        case StemType::MusicResidual: return stemState.musicVolume;
+    }
+
+    return 1.0f;
+}
+
+void setStemVolume(StemEnableState& stemState, StemType stemType, float volume) noexcept
+{
+    const auto clampedVolume = std::clamp(volume, 0.0f, 1.0f);
+
+    switch (stemType)
+    {
+        case StemType::FullMix:
+            stemState.drumsVolume = clampedVolume;
+            stemState.bassVolume = clampedVolume;
+            stemState.musicVolume = clampedVolume;
+            stemState.vocalsVolume = clampedVolume;
+            break;
+        case StemType::Drums:
+            stemState.drumsVolume = clampedVolume;
+            break;
+        case StemType::Bass:
+            stemState.bassVolume = clampedVolume;
+            break;
+        case StemType::Vocals:
+            stemState.vocalsVolume = clampedVolume;
+            break;
+        case StemType::InstrumentalOriginal:
+            break;
+        case StemType::MusicResidual:
+            stemState.musicVolume = clampedVolume;
+            break;
+    }
+}
+
 bool isPublicPlayableStem(StemType stemType) noexcept
 {
     switch (stemType)
@@ -183,6 +255,157 @@ bool isPublicPlayableStem(StemType stemType) noexcept
 bool areAllPublicStemsEnabled(const StemEnableState& stemState) noexcept
 {
     return stemState.drums && stemState.bass && stemState.music && stemState.vocals;
+}
+
+bool areAllPublicStemVolumesUnity(const StemEnableState& stemState) noexcept
+{
+    constexpr auto tolerance = 0.0001f;
+    return std::abs(stemState.drumsVolume - 1.0f) <= tolerance
+        && std::abs(stemState.bassVolume - 1.0f) <= tolerance
+        && std::abs(stemState.musicVolume - 1.0f) <= tolerance
+        && std::abs(stemState.vocalsVolume - 1.0f) <= tolerance;
+}
+
+void normalizeStemVolumesAcrossLoadedDecks(WorkspaceState& state, StemType stemType) noexcept
+{
+    if (! isPublicPlayableStem(stemType))
+        return;
+
+    const auto count = loadedDeckCount(state);
+    if (count == 0)
+        return;
+
+    if (count == 1)
+    {
+        for (auto& deck : state.decks)
+            if (loadedDeckParticipates(deck))
+                setStemVolume(deck.stemEnabled, stemType, 1.0f);
+        return;
+    }
+
+    auto total = 0.0f;
+    for (const auto& deck : state.decks)
+        if (loadedDeckParticipates(deck))
+            total += stemVolume(deck.stemEnabled, stemType);
+
+    if (total <= 0.0001f)
+    {
+        setEqualStemVolumesAcrossLoadedDecks(state, stemType, count);
+        return;
+    }
+
+    const auto scale = 1.0f / total;
+    for (auto& deck : state.decks)
+        if (loadedDeckParticipates(deck))
+            setStemVolume(deck.stemEnabled, stemType, stemVolume(deck.stemEnabled, stemType) * scale);
+}
+
+void setStemVolumeAcrossLoadedDecks(WorkspaceState& state, DeckId deckId, StemType stemType, float volume) noexcept
+{
+    auto* changedDeck = findDeck(state, deckId);
+    if (changedDeck == nullptr)
+        return;
+
+    if (! isPublicPlayableStem(stemType) || ! loadedDeckParticipates(*changedDeck))
+    {
+        setStemVolume(changedDeck->stemEnabled, stemType, volume);
+        return;
+    }
+
+    const auto count = loadedDeckCount(state);
+    if (count <= 1)
+    {
+        setStemVolume(changedDeck->stemEnabled, stemType, 1.0f);
+        return;
+    }
+
+    const auto changedVolume = std::clamp(volume, 0.0f, 1.0f);
+    setStemVolume(changedDeck->stemEnabled, stemType, changedVolume);
+
+    auto otherTotal = 0.0f;
+    auto otherCount = std::size_t {};
+    for (const auto& deck : state.decks)
+    {
+        if (deck.id == deckId || ! loadedDeckParticipates(deck))
+            continue;
+
+        otherTotal += stemVolume(deck.stemEnabled, stemType);
+        ++otherCount;
+    }
+
+    const auto targetOtherTotal = 1.0f - changedVolume;
+    if (otherCount == 0)
+        return;
+
+    if (otherTotal <= 0.0001f)
+    {
+        const auto equalOtherVolume = targetOtherTotal / static_cast<float>(otherCount);
+        for (auto& deck : state.decks)
+            if (deck.id != deckId && loadedDeckParticipates(deck))
+                setStemVolume(deck.stemEnabled, stemType, equalOtherVolume);
+        return;
+    }
+
+    const auto otherScale = targetOtherTotal / otherTotal;
+    for (auto& deck : state.decks)
+        if (deck.id != deckId && loadedDeckParticipates(deck))
+            setStemVolume(deck.stemEnabled, stemType, stemVolume(deck.stemEnabled, stemType) * otherScale);
+}
+
+void balanceStemVolumesForLoadedDeck(WorkspaceState& state, DeckId loadedDeckId) noexcept
+{
+    auto* loadedDeck = findDeck(state, loadedDeckId);
+    if (loadedDeck == nullptr || ! loadedDeckParticipates(*loadedDeck))
+        return;
+
+    const auto count = loadedDeckCount(state);
+    if (count == 0)
+        return;
+
+    if (count == 1)
+    {
+        for (const auto stemType : publicVolumeStemTypes)
+            setStemVolume(loadedDeck->stemEnabled, stemType, 1.0f);
+        return;
+    }
+
+    const auto newDeckShare = 1.0f / static_cast<float>(count);
+    const auto targetOtherTotal = 1.0f - newDeckShare;
+
+    for (const auto stemType : publicVolumeStemTypes)
+    {
+        auto otherTotal = 0.0f;
+        auto otherCount = std::size_t {};
+
+        for (const auto& deck : state.decks)
+        {
+            if (deck.id == loadedDeckId || ! loadedDeckParticipates(deck))
+                continue;
+
+            otherTotal += stemVolume(deck.stemEnabled, stemType);
+            ++otherCount;
+        }
+
+        setStemVolume(loadedDeck->stemEnabled, stemType, newDeckShare);
+
+        if (otherCount == 0)
+            continue;
+
+        if (otherTotal <= 0.0001f)
+        {
+            const auto equalOtherVolume = targetOtherTotal / static_cast<float>(otherCount);
+            for (auto& deck : state.decks)
+                if (deck.id != loadedDeckId && loadedDeckParticipates(deck))
+                    setStemVolume(deck.stemEnabled, stemType, equalOtherVolume);
+        }
+        else
+        {
+            const auto otherScale = targetOtherTotal / otherTotal;
+            for (auto& deck : state.decks)
+                if (deck.id != loadedDeckId && loadedDeckParticipates(deck))
+                    setStemVolume(deck.stemEnabled, stemType, stemVolume(deck.stemEnabled, stemType) * otherScale);
+        }
+    }
 }
 
 DeckRole nextRole(DeckRole role) noexcept

@@ -250,7 +250,15 @@ MainComponent::MainComponent()
     phraseWorkspace->onStemToggleRequested = [this](model::DeckId deckId, model::StemType stemType, bool enabled)
     {
         workspaceController.dispatch(engine::SetDeckStemEnabledCommand { deckId, stemType, enabled });
-        playbackEngineFor(deckId).setStemEnabled(stemType, enabled);
+        syncStemControlsToPlayback();
+
+        refreshWorkspaceSnapshot();
+    };
+
+    phraseWorkspace->onStemVolumeChanged = [this](model::DeckId deckId, model::StemType stemType, float volume)
+    {
+        workspaceController.dispatch(engine::SetDeckStemVolumeCommand { deckId, stemType, volume });
+        syncStemControlsToPlayback();
 
         refreshWorkspaceSnapshot();
     };
@@ -449,10 +457,6 @@ void MainComponent::applyLoadedTrackResult(std::shared_ptr<TrackLoadResult> resu
         playbackEngine.setCurrentGridBarPosition(transportGridBarPosition);
     }
 
-    configureDeckGridPlayback(result->deckId);
-    if (transportWasPlaying)
-        playbackEngineFor(result->deckId).start();
-
     workspaceController.dispatch(engine::SetDeckLaunchOffsetCommand { result->deckId, result->launchOffsetBars });
     workspaceController.dispatch(engine::SetDeckLoadedTrackCommand {
         result->deckId,
@@ -462,6 +466,12 @@ void MainComponent::applyLoadedTrackResult(std::shared_ptr<TrackLoadResult> resu
         std::move(result->phraseBlocks)
     });
     workspaceController.dispatch(engine::SetCurrentBarPositionCommand { transportGridBarPosition });
+    configureDeckGridPlayback(result->deckId);
+    syncStemControlsToPlayback();
+
+    if (transportWasPlaying)
+        playbackEngineFor(result->deckId).start();
+
     if (result->requestId == activeTrackLoadRequestId)
         phraseWorkspace->clearPendingTrackLoadMarker();
 
@@ -519,6 +529,25 @@ void MainComponent::updateDeckPlayingState()
 {
     for (const auto deckId : { model::DeckId::A, model::DeckId::B, model::DeckId::C })
         workspaceController.dispatch(engine::SetDeckPlayingCommand { deckId, playbackEngineFor(deckId).isPlaying() });
+}
+
+void MainComponent::syncStemControlsToPlayback()
+{
+    const auto snapshot = workspaceController.createSnapshot();
+
+    for (const auto deckId : { model::DeckId::A, model::DeckId::B, model::DeckId::C })
+    {
+        const auto* deck = model::findDeck(snapshot, deckId);
+        if (deck == nullptr)
+            continue;
+
+        auto& playbackEngine = playbackEngineFor(deckId);
+        for (const auto stemType : { model::StemType::Drums, model::StemType::Bass, model::StemType::MusicResidual, model::StemType::Vocals })
+        {
+            playbackEngine.setStemEnabled(stemType, model::isStemEnabled(deck->stemEnabled, stemType));
+            playbackEngine.setStemVolume(stemType, model::stemVolume(deck->stemEnabled, stemType));
+        }
+    }
 }
 
 engine::DeckPlaybackEngine& MainComponent::playbackEngineFor(model::DeckId deckId) noexcept

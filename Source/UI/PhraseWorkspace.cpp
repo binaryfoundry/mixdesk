@@ -253,6 +253,7 @@ void PhraseWorkspace::mouseDown(const juce::MouseEvent& event)
             selectedBlockIndex.reset();
             activeDrag.reset();
             activeTrackDrag.reset();
+            activeStemVolumeDrag.reset();
             activeBpmDragSource.reset();
             activeVolumeDragSource.reset();
 
@@ -270,6 +271,7 @@ void PhraseWorkspace::mouseDown(const juce::MouseEvent& event)
         selectedBlockIndex.reset();
         activeDrag.reset();
         activeTrackDrag.reset();
+        activeStemVolumeDrag.reset();
 
         if (onPlaybackToggleRequested)
             onPlaybackToggleRequested();
@@ -283,6 +285,7 @@ void PhraseWorkspace::mouseDown(const juce::MouseEvent& event)
         selectedBlockIndex.reset();
         activeDrag.reset();
         activeTrackDrag.reset();
+        activeStemVolumeDrag.reset();
         activeVolumeDragSource = sourceIndex;
         setMasterVolumeFromPoint(event.position);
         repaint();
@@ -294,8 +297,21 @@ void PhraseWorkspace::mouseDown(const juce::MouseEvent& event)
         selectedBlockIndex.reset();
         activeDrag.reset();
         activeTrackDrag.reset();
+        activeStemVolumeDrag.reset();
         activeBpmDragSource = sourceIndex;
         setBpmFromPoint(event.position);
+        repaint();
+        return;
+    }
+
+    if (const auto hit = hitTestStemVolume(event.position))
+    {
+        selectedDeck = hit->deckId;
+        selectedBlockIndex.reset();
+        activeDrag.reset();
+        activeTrackDrag.reset();
+        activeStemVolumeDrag = ActiveStemVolumeDrag { sourceIndex, hit->deckIndex, hit->deckId, hit->stemType };
+        setStemVolumeFromPoint(hit->deckIndex, hit->deckId, hit->stemType, event.position);
         repaint();
         return;
     }
@@ -306,6 +322,7 @@ void PhraseWorkspace::mouseDown(const juce::MouseEvent& event)
         selectedBlockIndex.reset();
         activeDrag.reset();
         activeTrackDrag.reset();
+        activeStemVolumeDrag.reset();
 
         if (hit->deckIndex < state.decks.size())
         {
@@ -326,6 +343,7 @@ void PhraseWorkspace::mouseDown(const juce::MouseEvent& event)
         selectedDeck = hit->deckId;
         selectedBlockIndex = hit->blockIndex;
         activeTrackDrag.reset();
+        activeStemVolumeDrag.reset();
 
         const auto& block = state.decks[hit->deckIndex].blocks[hit->blockIndex];
         activeDrag = ActiveDrag {
@@ -347,6 +365,7 @@ void PhraseWorkspace::mouseDown(const juce::MouseEvent& event)
         selectedDeck = hit->deckId;
         selectedBlockIndex.reset();
         activeDrag.reset();
+        activeStemVolumeDrag.reset();
 
         const auto& deck = state.decks[hit->deckIndex];
         activeTrackDrag = ActiveTrackDrag {
@@ -368,6 +387,7 @@ void PhraseWorkspace::mouseDown(const juce::MouseEvent& event)
         selectedBlockIndex.reset();
         activeDrag.reset();
         activeTrackDrag.reset();
+        activeStemVolumeDrag.reset();
         repaint();
     }
 }
@@ -416,6 +436,13 @@ void PhraseWorkspace::mouseDrag(const juce::MouseEvent& event)
         }
     }
 
+    if (activeStemVolumeDrag.has_value() && activeStemVolumeDrag->sourceIndex == sourceIndex)
+    {
+        const auto& drag = *activeStemVolumeDrag;
+        setStemVolumeFromPoint(drag.deckIndex, drag.deckId, drag.stemType, event.position);
+        repaint();
+    }
+
     if (activeVolumeDragSource.has_value() && *activeVolumeDragSource == sourceIndex)
     {
         setMasterVolumeFromPoint(event.position);
@@ -450,6 +477,9 @@ void PhraseWorkspace::mouseUp(const juce::MouseEvent& event)
 
     if (activeTrackDrag.has_value() && activeTrackDrag->sourceIndex == sourceIndex)
         activeTrackDrag.reset();
+
+    if (activeStemVolumeDrag.has_value() && activeStemVolumeDrag->sourceIndex == sourceIndex)
+        activeStemVolumeDrag.reset();
 
     if (activeVolumeDragSource.has_value() && *activeVolumeDragSource == sourceIndex)
         activeVolumeDragSource.reset();
@@ -544,15 +574,30 @@ juce::Rectangle<float> PhraseWorkspace::getDeckLabelBounds(std::size_t deckIndex
 juce::Rectangle<float> PhraseWorkspace::getStemToggleBounds(std::size_t deckIndex, model::StemType stemType) const
 {
     auto bounds = getDeckLabelBounds(deckIndex).reduced(14.0f, 12.0f);
-    const auto buttonWidth = 54.0f;
-    const auto buttonHeight = 30.0f;
     const auto gap = 8.0f;
     const auto index = stemToggleIndex(stemType);
+    const auto buttonWidth = (bounds.getWidth() - (gap * static_cast<float>(stemToggleOrder.size() - 1)))
+        / static_cast<float>(stemToggleOrder.size());
+    const auto controlTop = bounds.getY() + 60.0f;
+    const auto stemControlHeight = std::max(94.0f, bounds.getBottom() - controlTop);
 
     return { bounds.getX() + (static_cast<float>(index) * (buttonWidth + gap)),
-        bounds.getBottom() - buttonHeight,
+        bounds.getBottom() - stemControlHeight,
         buttonWidth,
-        buttonHeight };
+        stemControlHeight };
+}
+
+juce::Rectangle<float> PhraseWorkspace::getStemToggleButtonBounds(std::size_t deckIndex, model::StemType stemType) const
+{
+    auto bounds = getStemToggleBounds(deckIndex, stemType);
+    return bounds.removeFromBottom(30.0f);
+}
+
+juce::Rectangle<float> PhraseWorkspace::getStemVolumeTrackBounds(std::size_t deckIndex, model::StemType stemType) const
+{
+    auto bounds = getStemToggleBounds(deckIndex, stemType).reduced(9.0f, 8.0f);
+    bounds.removeFromBottom(34.0f);
+    return bounds;
 }
 
 juce::Rectangle<float> PhraseWorkspace::getLaneBounds(std::size_t deckIndex) const
@@ -835,7 +880,7 @@ void PhraseWorkspace::drawLanes(juce::Graphics& g)
         g.fillRoundedRectangle(laneLabel, 8.0f);
 
         auto textBounds = laneLabel.reduced(14.0f, 12.0f);
-        auto deckHeader = textBounds.removeFromTop(36.0f);
+        auto deckHeader = textBounds.removeFromTop(50.0f);
         const auto badge = deckHeader.removeFromLeft(46.0f).reduced(0.0f, 1.0f);
 
         g.setColour(isSelected ? juce::Colour(0xff4fbed2) : juce::Colour(0xff2a333b));
@@ -845,53 +890,60 @@ void PhraseWorkspace::drawLanes(juce::Graphics& g)
         g.drawFittedText(asJuceString(model::toString(deck.id)).fromLastOccurrenceOf(" ", false, true),
             badge.toNearestInt(), juce::Justification::centred, 1);
 
-        auto roleArea = deckHeader.reduced(10.0f, 0.0f);
-        g.setColour(mutedTextColour());
-        g.setFont(makeFont(12.5f, juce::Font::bold));
-        g.drawFittedText(asJuceString(model::toString(deck.role)).toUpperCase(),
-            roleArea.removeFromTop(16.0f).toNearestInt(), juce::Justification::centredLeft, 1);
+        auto trackInfoArea = deckHeader.reduced(10.0f, 0.0f);
+        const auto title = hasTrack ? asJuceString(deck.loadedTrack->name) : juce::String("Double-tap timeline to load");
+        g.setColour(hasTrack ? textColour() : mutedTextColour().withAlpha(0.64f));
+        g.setFont(makeFont(hasTrack ? 14.8f : 13.0f, hasTrack ? juce::Font::bold : juce::Font::plain));
+        g.drawFittedText(title, trackInfoArea.removeFromTop(23.0f).toNearestInt(),
+            juce::Justification::centredLeft, 1);
 
+        const auto key = hasTrack && ! deck.loadedTrack->key.empty() ? asJuceString(deck.loadedTrack->key) : juce::String("--");
         const auto launchText = juce::String("Offset ")
             + juce::String(deck.launchOffsetBars >= 0 ? "+" : "")
             + juce::String(deck.launchOffsetBars)
             + " bars";
-        g.setColour(mutedTextColour().withAlpha(0.72f));
-        g.setFont(makeFont(11.5f));
-        g.drawFittedText(launchText, roleArea.toNearestInt(), juce::Justification::centredLeft, 1);
-
-        textBounds.removeFromTop(10.0f);
-        const auto title = hasTrack ? asJuceString(deck.loadedTrack->name) : juce::String("Empty deck");
-        g.setColour(hasTrack ? textColour() : mutedTextColour().withAlpha(0.58f));
-        g.setFont(makeFont(hasTrack ? 16.0f : 14.0f, hasTrack ? juce::Font::bold : juce::Font::plain));
-        g.drawFittedText(title, textBounds.removeFromTop(46.0f).toNearestInt(), juce::Justification::centredLeft, 2);
-
-        const auto key = hasTrack && ! deck.loadedTrack->key.empty() ? asJuceString(deck.loadedTrack->key) : juce::String("--");
         const auto meta = juce::String("Key ") + key
             + "   BPM " + trackBpmText(deck, state.bpm)
-            + "   " + formatDuration(trackDurationSeconds(deck));
+            + "   " + formatDuration(trackDurationSeconds(deck))
+            + "   " + launchText;
 
         g.setColour(hasTrack ? juce::Colour(0xffd6eef5) : mutedTextColour().withAlpha(0.58f));
-        g.setFont(makeFont(13.0f, juce::Font::bold));
-        g.drawFittedText(meta, textBounds.removeFromTop(24.0f).toNearestInt(), juce::Justification::centredLeft, 1);
-
-        const auto stateLine = juce::String("Vol ") + juce::String(static_cast<int>(std::round(deck.volume * 100.0f))) + "%"
-            + (deck.lowCutEnabled ? "   Low cut" : juce::String());
-        g.setColour(deck.lowCutEnabled ? juce::Colour(0xff75d1e0) : mutedTextColour().withAlpha(0.72f));
-        g.setFont(makeFont(12.0f));
-        g.drawFittedText(stateLine, textBounds.withTrimmedBottom(38.0f).toNearestInt(), juce::Justification::centredLeft, 1);
+        g.setFont(makeFont(12.5f, juce::Font::bold));
+        g.drawFittedText(meta, trackInfoArea.removeFromTop(17.0f).toNearestInt(), juce::Justification::centredLeft, 1);
 
         for (const auto stemType : stemToggleOrder)
         {
-            const auto button = getStemToggleBounds(deckIndex, stemType);
+            const auto control = getStemToggleBounds(deckIndex, stemType);
+            const auto button = getStemToggleButtonBounds(deckIndex, stemType);
+            const auto track = getStemVolumeTrackBounds(deckIndex, stemType);
             const auto stemEnabled = model::isStemEnabled(deck.stemEnabled, stemType);
+            const auto stemLevel = model::stemVolume(deck.stemEnabled, stemType);
             const auto colour = stemColour(stemType);
+
+            g.setColour(juce::Colour(0xff0d1317).withAlpha(hasTrack ? 0.92f : 0.70f));
+            g.fillRoundedRectangle(control, 7.0f);
+            g.setColour(colour.withAlpha(stemEnabled ? 0.70f : 0.32f));
+            g.drawRoundedRectangle(control, 7.0f, stemEnabled ? 1.3f : 1.0f);
+
+            g.setColour(juce::Colour(0xff05090c).withAlpha(0.78f));
+            g.fillRoundedRectangle(track, 4.0f);
+
+            auto fill = track.reduced(4.0f, 3.0f);
+            const auto fillHeight = fill.getHeight() * std::clamp(stemLevel, 0.0f, 1.0f);
+            fill = { fill.getX(), fill.getBottom() - fillHeight, fill.getWidth(), fillHeight };
+            g.setColour(colour.withAlpha(stemEnabled ? 0.74f : 0.22f));
+            g.fillRoundedRectangle(fill, 3.0f);
+
+            g.setColour(colour.withAlpha(stemEnabled ? 0.90f : 0.42f));
+            const auto markerY = track.getBottom() - (track.getHeight() * std::clamp(stemLevel, 0.0f, 1.0f));
+            g.drawLine(track.getX() + 4.0f, markerY, track.getRight() - 4.0f, markerY, 1.4f);
 
             g.setColour(stemEnabled ? colour.withAlpha(hasTrack ? 0.90f : 0.54f)
                                     : juce::Colour(0xff0d1317).withAlpha(0.92f));
-            g.fillRoundedRectangle(button, 6.0f);
+            g.fillRoundedRectangle(button, 5.0f);
 
             g.setColour(colour.withAlpha(stemEnabled ? 0.90f : 0.42f));
-            g.drawRoundedRectangle(button, 6.0f, stemEnabled ? 1.5f : 1.1f);
+            g.drawRoundedRectangle(button, 5.0f, stemEnabled ? 1.5f : 1.1f);
 
             g.setColour(stemEnabled ? juce::Colour(0xff071014) : colour.withAlpha(0.72f));
             g.setFont(makeFont(13.0f, juce::Font::bold));
@@ -991,15 +1043,17 @@ void PhraseWorkspace::drawStemWaveforms(juce::Graphics& g, const model::DeckTime
 
         const auto colour = stemColour(stemType);
         const auto stemEnabled = model::isStemEnabled(deck.stemEnabled, stemType);
+        const auto stemLevel = model::stemVolume(deck.stemEnabled, stemType);
+        const auto enabledAlpha = stemEnabled ? (0.18f + (0.82f * stemLevel)) : 0.0f;
         g.setColour(juce::Colour(0xff0c161b).withAlpha(0.62f));
         g.fillRoundedRectangle(row, 4.0f);
-        g.setColour(colour.withAlpha(stemEnabled ? 0.28f : 0.12f));
+        g.setColour(colour.withAlpha(stemEnabled ? 0.10f + (0.18f * enabledAlpha) : 0.12f));
         g.drawRoundedRectangle(row, 4.0f, 0.8f);
 
         const auto labelBounds = juce::Rectangle<float>(row.getX() + 6.0f, row.getY() + 4.0f, 54.0f, 17.0f);
         g.setColour(juce::Colour(0xff0a1014).withAlpha(0.80f));
         g.fillRoundedRectangle(labelBounds, 4.0f);
-        g.setColour(colour.withAlpha(stemEnabled ? 1.0f : 0.45f));
+        g.setColour(colour.withAlpha(stemEnabled ? enabledAlpha : 0.45f));
         g.setFont(makeFont(11.5f, juce::Font::bold));
         g.drawFittedText(asJuceString(model::toString(stemType)), labelBounds.reduced(6.0f, 0.0f).toNearestInt(),
             juce::Justification::centredLeft, 1);
@@ -1085,9 +1139,9 @@ void PhraseWorkspace::drawStemWaveforms(juce::Graphics& g, const model::DeckTime
 
         waveformPath.closeSubPath();
 
-        g.setColour(colour.withAlpha(stemEnabled ? 0.38f : 0.11f));
+        g.setColour(colour.withAlpha(stemEnabled ? 0.09f + (0.29f * enabledAlpha) : 0.11f));
         g.fillPath(waveformPath);
-        g.setColour(colour.withAlpha(stemEnabled ? 0.88f : 0.28f));
+        g.setColour(colour.withAlpha(stemEnabled ? 0.22f + (0.66f * enabledAlpha) : 0.28f));
         g.strokePath(waveformPath, juce::PathStrokeType(0.75f));
     }
 }
@@ -1340,8 +1394,25 @@ std::optional<PhraseWorkspace::HitStemToggle> PhraseWorkspace::hitTestStemToggle
     {
         const auto& deck = state.decks[deckIndex];
         for (const auto stemType : stemToggleOrder)
-            if (getStemToggleBounds(deckIndex, stemType).contains(position))
+            if (getStemToggleButtonBounds(deckIndex, stemType).contains(position))
                 return HitStemToggle { deckIndex, deck.id, stemType };
+    }
+
+    return std::nullopt;
+}
+
+std::optional<PhraseWorkspace::HitStemVolume> PhraseWorkspace::hitTestStemVolume(juce::Point<float> position) const
+{
+    for (std::size_t deckIndex = 0; deckIndex < state.decks.size(); ++deckIndex)
+    {
+        const auto& deck = state.decks[deckIndex];
+        for (const auto stemType : stemToggleOrder)
+        {
+            auto volumeHitArea = getStemToggleBounds(deckIndex, stemType);
+            volumeHitArea.removeFromBottom(30.0f);
+            if (volumeHitArea.contains(position))
+                return HitStemVolume { deckIndex, deck.id, stemType };
+        }
     }
 
     return std::nullopt;
@@ -1459,6 +1530,34 @@ PhraseWorkspace::ConflictFlags PhraseWorkspace::detectConflictForBlock(std::size
     }
 
     return conflictFlags;
+}
+
+float PhraseWorkspace::stemVolumeForY(std::size_t deckIndex, model::StemType stemType, float y) const
+{
+    const auto track = getStemVolumeTrackBounds(deckIndex, stemType);
+    if (track.getHeight() <= 0.0f)
+        return 1.0f;
+
+    return std::clamp((track.getBottom() - y) / track.getHeight(), 0.0f, 1.0f);
+}
+
+void PhraseWorkspace::setStemVolumeFromPoint(std::size_t deckIndex,
+    model::DeckId deckId,
+    model::StemType stemType,
+    juce::Point<float> position)
+{
+    if (deckIndex >= state.decks.size())
+        return;
+
+    const auto volume = stemVolumeForY(deckIndex, stemType, position.y);
+    auto& deck = state.decks[deckIndex];
+    if (std::abs(model::stemVolume(deck.stemEnabled, stemType) - volume) < 0.005f)
+        return;
+
+    model::setStemVolume(deck.stemEnabled, stemType, volume);
+
+    if (onStemVolumeChanged)
+        onStemVolumeChanged(deckId, stemType, volume);
 }
 
 float PhraseWorkspace::volumeForX(float x) const

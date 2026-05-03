@@ -13,7 +13,7 @@ This is a small JUCE/C++20 prototype for a touch-first 3-deck DJ phrase alignmen
 - Stem preprocessing reconciles direct LALALAI stems with `no_bass`, `no_drum`, and `no_vocals` complements so playback exposes clean Drums, Bass, Music, and Vocals.
 - The top bar provides one global play/pause control, a master volume slider, and a global BPM slider.
 - BPM changes drive the shared grid playhead while Signalsmith Stretch keeps playback pitch locked.
-- Per-deck D/B/M/V stem buttons toggle drum, bass, music, and vocal layers using the same colours as the waveform layers.
+- Per-deck D/B/M/V stem controls toggle drum, bass, music, and vocal layers and provide vertical per-stem volume control. Raising one deck's stem ducks the same stem on the other loaded decks so that stem's total stays at one.
 - Early conflict indicators for overlapping bass-heavy or vocal-heavy blocks.
 - A small controller boundary where UI commands are dispatched instead of touching any future audio engine directly.
 

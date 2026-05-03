@@ -71,10 +71,10 @@ float mixedSampleAt(const PreparedStemSet& stems,
     if (canUseFullMixForPlayback(stems, stemEnabled))
         return sampleAt(stems.fullMix, channel, timeSeconds);
 
-    return (stemEnabled.drums ? sampleAt(stems.drums, channel, timeSeconds) : 0.0f)
-        + (stemEnabled.bass ? sampleAt(stems.bass, channel, timeSeconds) : 0.0f)
-        + (stemEnabled.music ? sampleAt(stems.musicResidual, channel, timeSeconds) : 0.0f)
-        + (stemEnabled.vocals ? sampleAt(stems.vocals, channel, timeSeconds) : 0.0f);
+    return (stemEnabled.drums ? sampleAt(stems.drums, channel, timeSeconds) * stemEnabled.drumsVolume : 0.0f)
+        + (stemEnabled.bass ? sampleAt(stems.bass, channel, timeSeconds) * stemEnabled.bassVolume : 0.0f)
+        + (stemEnabled.music ? sampleAt(stems.musicResidual, channel, timeSeconds) * stemEnabled.musicVolume : 0.0f)
+        + (stemEnabled.vocals ? sampleAt(stems.vocals, channel, timeSeconds) * stemEnabled.vocalsVolume : 0.0f);
 }
 } // namespace
 
@@ -216,6 +216,12 @@ void DeckPlaybackEngine::setStemEnabled(model::StemType stemType, bool enabled)
 {
     const juce::ScopedLock scopedLock(lock);
     model::setStemEnabled(stemEnabled, stemType, enabled);
+}
+
+void DeckPlaybackEngine::setStemVolume(model::StemType stemType, float volume)
+{
+    const juce::ScopedLock scopedLock(lock);
+    model::setStemVolume(stemEnabled, stemType, volume);
 }
 
 void DeckPlaybackEngine::setMasterVolume(float volume)

@@ -91,6 +91,10 @@ struct StemEnableState
     bool bass { true };
     bool music { true };
     bool vocals { true };
+    float drumsVolume { 1.0f };
+    float bassVolume { 1.0f };
+    float musicVolume { 1.0f };
+    float vocalsVolume { 1.0f };
 };
 
 struct StemSet
@@ -194,8 +198,14 @@ std::string_view toString(StemDerivationMethod method) noexcept;
 
 bool isStemEnabled(const StemEnableState& stemState, StemType stemType) noexcept;
 void setStemEnabled(StemEnableState& stemState, StemType stemType, bool enabled) noexcept;
+float stemVolume(const StemEnableState& stemState, StemType stemType) noexcept;
+void setStemVolume(StemEnableState& stemState, StemType stemType, float volume) noexcept;
 bool isPublicPlayableStem(StemType stemType) noexcept;
 bool areAllPublicStemsEnabled(const StemEnableState& stemState) noexcept;
+bool areAllPublicStemVolumesUnity(const StemEnableState& stemState) noexcept;
+void normalizeStemVolumesAcrossLoadedDecks(WorkspaceState& state, StemType stemType) noexcept;
+void setStemVolumeAcrossLoadedDecks(WorkspaceState& state, DeckId deckId, StemType stemType, float volume) noexcept;
+void balanceStemVolumesForLoadedDeck(WorkspaceState& state, DeckId loadedDeckId) noexcept;
 DeckRole nextRole(DeckRole role) noexcept;
 
 DeckTimeline* findDeck(WorkspaceState& state, DeckId deckId) noexcept;
