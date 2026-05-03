@@ -25,6 +25,7 @@ public:
     void configureGridPlayback(double deckSecondsPerBar, double firstBeatOffsetSeconds, int launchOffsetBars);
     void setGlobalBpm(double bpm, int beatsPerBar);
     void setLaunchOffsetBars(int launchOffsetBars);
+    void setCurrentGridBarPosition(double gridBarPosition);
     void setStemEnabled(model::StemType stemType, bool enabled);
     void setMasterVolume(float volume);
 
@@ -36,9 +37,11 @@ public:
 
     void prepareToPlay(int samplesPerBlockExpected, double sampleRate) override;
     void getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferToFill) override;
+    void addNextAudioBlock(const juce::AudioSourceChannelInfo& bufferToFill);
     void releaseResources() override;
 
 private:
+    void renderNextAudioBlock(const juce::AudioSourceChannelInfo& bufferToFill, bool replaceOutput);
     void resetTimeStretch(double playbackRate);
     void ensureStretchBuffers(int inputSamples, int outputSamples);
 

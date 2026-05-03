@@ -202,6 +202,16 @@ void DeckPlaybackEngine::setLaunchOffsetBars(int newLaunchOffsetBars)
     timeStretchNeedsReset = true;
 }
 
+void DeckPlaybackEngine::setCurrentGridBarPosition(double gridBarPosition)
+{
+    const juce::ScopedLock scopedLock(lock);
+    currentGridBarPosition = std::max(0.0, gridBarPosition);
+    currentPositionSeconds = gridBarToTrackSeconds(currentGridBarPosition, deckSecondsPerBar, firstBeatOffsetSeconds, launchOffsetBars);
+    stretchInputPositionSeconds = currentPositionSeconds;
+    stretchInputRemainderSamples = 0.0;
+    timeStretchNeedsReset = true;
+}
+
 void DeckPlaybackEngine::setStemEnabled(model::StemType stemType, bool enabled)
 {
     const juce::ScopedLock scopedLock(lock);
@@ -259,8 +269,19 @@ void DeckPlaybackEngine::prepareToPlay(int samplesPerBlockExpected, double sampl
 
 void DeckPlaybackEngine::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferToFill)
 {
+    renderNextAudioBlock(bufferToFill, true);
+}
+
+void DeckPlaybackEngine::addNextAudioBlock(const juce::AudioSourceChannelInfo& bufferToFill)
+{
+    renderNextAudioBlock(bufferToFill, false);
+}
+
+void DeckPlaybackEngine::renderNextAudioBlock(const juce::AudioSourceChannelInfo& bufferToFill, bool replaceOutput)
+{
     const juce::ScopedLock scopedLock(lock);
-    bufferToFill.clearActiveBufferRegion();
+    if (replaceOutput)
+        bufferToFill.clearActiveBufferRegion();
 
     if (! loaded || ! playing || outputSampleRate <= 0.0 || bufferToFill.buffer == nullptr || ! timeStretchConfigured)
         return;
@@ -300,7 +321,12 @@ void DeckPlaybackEngine::getNextAudioBlock(const juce::AudioSourceChannelInfo& b
         for (auto channel = 0; channel < outputBuffer->getNumChannels(); ++channel)
         {
             const auto sourceChannel = std::min(channel, 1);
-            outputBuffer->setSample(channel, sample, stretchOutputBuffer.getSample(sourceChannel, outputSampleIndex) * masterVolume);
+            const auto output = stretchOutputBuffer.getSample(sourceChannel, outputSampleIndex) * masterVolume;
+
+            if (replaceOutput)
+                outputBuffer->setSample(channel, sample, output);
+            else
+                outputBuffer->addSample(channel, sample, output);
         }
     }
 

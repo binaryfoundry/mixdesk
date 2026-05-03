@@ -8,6 +8,7 @@
 
 #include <juce_audio_utils/juce_audio_utils.h>
 
+#include <array>
 #include <memory>
 #include <optional>
 #include <atomic>
@@ -35,16 +36,22 @@ private:
     void beginLoadTrack(model::DeckId deckId, int launchOffsetBars, const juce::File& metadataFile);
     void applyLoadedTrackResult(std::shared_ptr<TrackLoadResult> result);
     void togglePlayback();
-    void configureDeckOneGridPlayback();
+    void configureDeckGridPlayback(model::DeckId deckId);
+    void setTransportGridBarPosition(double gridBarPosition);
+    void updateDeckPlayingState();
+    [[nodiscard]] engine::DeckPlaybackEngine& playbackEngineFor(model::DeckId deckId) noexcept;
+    [[nodiscard]] const engine::DeckPlaybackEngine& playbackEngineFor(model::DeckId deckId) const noexcept;
+    [[nodiscard]] std::optional<double> firstPlayingGridBarPosition() const;
     void refreshWorkspaceSnapshot();
 
     AppSettings appSettings;
     engine::WorkspaceController workspaceController;
-    engine::DeckPlaybackEngine deckPlaybackEngine;
+    std::array<engine::DeckPlaybackEngine, 3> deckPlaybackEngines;
     std::unique_ptr<ui::PhraseWorkspace> phraseWorkspace;
-    std::optional<model::BeatGrid> deckOneBeatGrid;
+    std::array<std::optional<model::BeatGrid>, 3> deckBeatGrids;
+    std::array<int, 3> deckLaunchOffsetBars {};
     std::atomic<int> nextTrackLoadRequestId { 1 };
     int activeTrackLoadRequestId {};
-    int deckOneLaunchOffsetBars {};
+    double transportGridBarPosition {};
 };
 } // namespace mixdesk::app

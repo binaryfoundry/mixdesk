@@ -8,7 +8,7 @@ This is a small JUCE/C++20 prototype for a touch-first 3-deck DJ phrase alignmen
 - Starts with empty deck lanes; double-tap a lane to choose a track and place it at that bar.
 - Bar/phrase snapping structure for dragging phrase blocks horizontally.
 - Track selection scans the configured tracks root for `mixdesk.json` files, defaulting to `D:\tracks`.
-- The drum stem is low-pass filtered and analyzed for a beat grid, then beat markers are drawn on the Deck A lane.
+- The drum stem is low-pass filtered and analyzed for a beat grid, then beat markers are drawn on the loaded deck lane.
 - Drum, bass, music, and vocal stems are decoded once at load time into compact peak waveforms and rendered in layered colours.
 - Stem preprocessing reconciles direct LALALAI stems with `no_bass`, `no_drum`, and `no_vocals` complements so playback exposes clean Drums, Bass, Music, and Vocals.
 - The top bar provides one global play/pause control, a master volume slider, and a global BPM slider.
@@ -17,7 +17,7 @@ This is a small JUCE/C++20 prototype for a touch-first 3-deck DJ phrase alignmen
 - Early conflict indicators for overlapping bass-heavy or vocal-heavy blocks.
 - A small controller boundary where UI commands are dispatched instead of touching any future audio engine directly.
 
-This is still not a full DJ audio engine. Playback is a minimal single-deck JUCE `AudioSource` used only to prove Deck A loading, stem mixing, and pitch-locked tempo changes.
+This is still not a full DJ audio engine. Playback is a minimal three-deck JUCE `AudioSource` path used to prove grid-positioned track playback, stem mixing, and pitch-locked tempo changes.
 
 ## Build
 
@@ -45,7 +45,7 @@ On Windows/MSVC, `MIXDESK_STATIC_RUNTIME` is enabled by default to avoid dependi
 - `Source/Engine/BeatDetector.*`: C++ translation of the `web-audio-beat-detector` worker algorithm: 240 Hz low-pass render, threshold peak detection, nearby peak interval counting, and tempo bucket scoring.
 - `Source/Engine/StemPreparation.*`: offline stem decoding, alignment, complement-stem reconciliation, `MusicResidual` derivation, reconstruction validation metrics, and public stem mix helpers.
 - `Source/Engine/WaveformAnalyzer.*`: builds downsampled stem peak envelopes for timeline rendering.
-- `Source/Engine/DeckPlaybackEngine.*`: minimal single-deck playback source for Deck A, including prepared-stem playback, global grid transport, master volume, and Signalsmith Stretch pitch-locked BPM changes.
+- `Source/Engine/DeckPlaybackEngine.*`: reusable per-deck playback source, including prepared-stem playback, grid-positioned transport, master volume, and Signalsmith Stretch pitch-locked BPM changes.
 - `Source/Engine/WorkspaceController.*`: temporary UI-thread command receiver and state snapshot source. This is where a command queue/state snapshot handoff should replace direct mutation later.
 - `Source/App`: JUCE application shell and main component wiring.
 

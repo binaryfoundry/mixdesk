@@ -37,6 +37,11 @@ juce::String deckLabel(model::DeckId deckId)
     return juce::String(text.data(), static_cast<int>(text.size()));
 }
 
+std::size_t deckSlot(model::DeckId deckId)
+{
+    return model::deckIndex(deckId);
+}
+
 void addPreparedStemWaveforms(engine::WaveformAnalyzer& waveformAnalyzer,
     const engine::PreparedStemSet& stems,
     std::vector<model::StemWaveform>& stemWaveforms)
@@ -213,11 +218,9 @@ MainComponent::MainComponent()
 
     phraseWorkspace->onLaunchOffsetNudged = [this](model::DeckId deckId, int deltaBars)
     {
-        if (deckId == model::DeckId::A)
-        {
-            deckOneLaunchOffsetBars += deltaBars;
-            deckPlaybackEngine.setLaunchOffsetBars(deckOneLaunchOffsetBars);
-        }
+        const auto slot = deckSlot(deckId);
+        deckLaunchOffsetBars[slot] += deltaBars;
+        playbackEngineFor(deckId).setLaunchOffsetBars(deckLaunchOffsetBars[slot]);
 
         workspaceController.dispatch(engine::NudgeLaunchOffsetCommand { deckId, deltaBars });
         refreshWorkspaceSnapshot();
@@ -225,11 +228,9 @@ MainComponent::MainComponent()
 
     phraseWorkspace->onTrackLaunchOffsetMoved = [this](model::DeckId deckId, int launchOffsetBars)
     {
-        if (deckId == model::DeckId::A)
-        {
-            deckOneLaunchOffsetBars = launchOffsetBars;
-            deckPlaybackEngine.setLaunchOffsetBars(deckOneLaunchOffsetBars);
-        }
+        const auto slot = deckSlot(deckId);
+        deckLaunchOffsetBars[slot] = launchOffsetBars;
+        playbackEngineFor(deckId).setLaunchOffsetBars(launchOffsetBars);
 
         workspaceController.dispatch(engine::SetDeckLaunchOffsetCommand { deckId, launchOffsetBars });
         refreshWorkspaceSnapshot();
@@ -249,9 +250,7 @@ MainComponent::MainComponent()
     phraseWorkspace->onStemToggleRequested = [this](model::DeckId deckId, model::StemType stemType, bool enabled)
     {
         workspaceController.dispatch(engine::SetDeckStemEnabledCommand { deckId, stemType, enabled });
-
-        if (deckId == model::DeckId::A)
-            deckPlaybackEngine.setStemEnabled(stemType, enabled);
+        playbackEngineFor(deckId).setStemEnabled(stemType, enabled);
 
         refreshWorkspaceSnapshot();
     };
@@ -259,14 +258,21 @@ MainComponent::MainComponent()
     phraseWorkspace->onMasterVolumeChanged = [this](float volume)
     {
         workspaceController.dispatch(engine::SetMasterVolumeCommand { volume });
-        deckPlaybackEngine.setMasterVolume(volume);
+        for (auto& playbackEngine : deckPlaybackEngines)
+            playbackEngine.setMasterVolume(volume);
         refreshWorkspaceSnapshot();
     };
 
     phraseWorkspace->onBpmChanged = [this](double bpm)
     {
         workspaceController.dispatch(engine::SetBpmCommand { bpm });
-        deckPlaybackEngine.setGlobalBpm(bpm, deckOneBeatGrid.has_value() ? deckOneBeatGrid->beatsPerBar : 4);
+
+        for (std::size_t slot = 0; slot < deckPlaybackEngines.size(); ++slot)
+        {
+            const auto beatsPerBar = deckBeatGrids[slot].has_value() ? deckBeatGrids[slot]->beatsPerBar : 4;
+            deckPlaybackEngines[slot].setGlobalBpm(bpm, beatsPerBar);
+        }
+
         refreshWorkspaceSnapshot();
     };
 
@@ -294,26 +300,31 @@ void MainComponent::resized()
 
 void MainComponent::prepareToPlay(int samplesPerBlockExpected, double sampleRate)
 {
-    deckPlaybackEngine.prepareToPlay(samplesPerBlockExpected, sampleRate);
+    for (auto& playbackEngine : deckPlaybackEngines)
+        playbackEngine.prepareToPlay(samplesPerBlockExpected, sampleRate);
 }
 
 void MainComponent::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferToFill)
 {
-    deckPlaybackEngine.getNextAudioBlock(bufferToFill);
+    bufferToFill.clearActiveBufferRegion();
+
+    for (auto& playbackEngine : deckPlaybackEngines)
+        playbackEngine.addNextAudioBlock(bufferToFill);
 }
 
 void MainComponent::releaseResources()
 {
-    deckPlaybackEngine.releaseResources();
+    for (auto& playbackEngine : deckPlaybackEngines)
+        playbackEngine.releaseResources();
 }
 
 void MainComponent::timerCallback()
 {
-    const auto isPlaying = deckPlaybackEngine.isPlaying();
-    for (const auto deckId : { model::DeckId::A, model::DeckId::B, model::DeckId::C })
-        workspaceController.dispatch(engine::SetDeckPlayingCommand { deckId, isPlaying });
+    if (const auto gridBarPosition = firstPlayingGridBarPosition())
+        transportGridBarPosition = *gridBarPosition;
 
-    workspaceController.dispatch(engine::SetCurrentBarPositionCommand { deckPlaybackEngine.getCurrentGridBarPosition() });
+    updateDeckPlayingState();
+    workspaceController.dispatch(engine::SetCurrentBarPositionCommand { transportGridBarPosition });
 
     refreshWorkspaceSnapshot();
 }
@@ -412,28 +423,35 @@ void MainComponent::applyLoadedTrackResult(std::shared_ptr<TrackLoadResult> resu
     }
 
     juce::Logger::writeToLog("Track load complete: " + juce::String(result->track.name) + "\n" + result->message);
+    const auto transportWasPlaying = std::any_of(deckPlaybackEngines.begin(),
+        deckPlaybackEngines.end(),
+        [](const engine::DeckPlaybackEngine& playbackEngine) { return playbackEngine.isPlaying(); });
 
-    if (result->deckId == model::DeckId::A)
+    const auto slot = deckSlot(result->deckId);
+    deckLaunchOffsetBars[slot] = result->launchOffsetBars;
+    deckBeatGrids[slot] = result->beatGrid;
+
+    if (result->hasPreparedAudio)
     {
-        deckOneLaunchOffsetBars = result->launchOffsetBars;
-        deckOneBeatGrid = result->beatGrid;
-
-        if (result->hasPreparedAudio)
+        auto& playbackEngine = playbackEngineFor(result->deckId);
+        if (! playbackEngine.loadPreparedStemSet(std::move(result->preparedStems)))
         {
-            if (! deckPlaybackEngine.loadPreparedStemSet(std::move(result->preparedStems)))
-            {
-                if (result->requestId == activeTrackLoadRequestId)
-                    phraseWorkspace->clearPendingTrackLoadMarker();
+            if (result->requestId == activeTrackLoadRequestId)
+                phraseWorkspace->clearPendingTrackLoadMarker();
 
-                juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon,
-                    "Track Load Failed",
-                    "Prepared audio could not be loaded for Deck A.");
-                return;
-            }
+            juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon,
+                "Track Load Failed",
+                "Prepared audio could not be loaded for " + deckLabel(result->deckId) + ".");
+            return;
         }
 
-        configureDeckOneGridPlayback();
+        playbackEngine.setMasterVolume(workspaceController.createSnapshot().masterVolume);
+        playbackEngine.setCurrentGridBarPosition(transportGridBarPosition);
     }
+
+    configureDeckGridPlayback(result->deckId);
+    if (transportWasPlaying)
+        playbackEngineFor(result->deckId).start();
 
     workspaceController.dispatch(engine::SetDeckLaunchOffsetCommand { result->deckId, result->launchOffsetBars });
     workspaceController.dispatch(engine::SetDeckLoadedTrackCommand {
@@ -443,7 +461,7 @@ void MainComponent::applyLoadedTrackResult(std::shared_ptr<TrackLoadResult> resu
         std::move(result->stemWaveforms),
         std::move(result->phraseBlocks)
     });
-    workspaceController.dispatch(engine::SetCurrentBarPositionCommand { deckPlaybackEngine.getCurrentGridBarPosition() });
+    workspaceController.dispatch(engine::SetCurrentBarPositionCommand { transportGridBarPosition });
     if (result->requestId == activeTrackLoadRequestId)
         phraseWorkspace->clearPendingTrackLoadMarker();
 
@@ -452,22 +470,77 @@ void MainComponent::applyLoadedTrackResult(std::shared_ptr<TrackLoadResult> resu
 
 void MainComponent::togglePlayback()
 {
-    deckPlaybackEngine.togglePlayback();
-    const auto isPlaying = deckPlaybackEngine.isPlaying();
-    for (const auto deckId : { model::DeckId::A, model::DeckId::B, model::DeckId::C })
-        workspaceController.dispatch(engine::SetDeckPlayingCommand { deckId, isPlaying });
+    const auto anyPlaying = std::any_of(deckPlaybackEngines.begin(),
+        deckPlaybackEngines.end(),
+        [](const engine::DeckPlaybackEngine& playbackEngine) { return playbackEngine.isPlaying(); });
+
+    if (anyPlaying)
+    {
+        for (auto& playbackEngine : deckPlaybackEngines)
+            playbackEngine.stop();
+    }
+    else
+    {
+        setTransportGridBarPosition(transportGridBarPosition);
+
+        for (auto& playbackEngine : deckPlaybackEngines)
+            playbackEngine.start();
+    }
+
+    updateDeckPlayingState();
     refreshWorkspaceSnapshot();
 }
 
-void MainComponent::configureDeckOneGridPlayback()
+void MainComponent::configureDeckGridPlayback(model::DeckId deckId)
 {
-    if (! deckOneBeatGrid.has_value())
+    const auto slot = deckSlot(deckId);
+    const auto& beatGrid = deckBeatGrids[slot];
+    if (! beatGrid.has_value())
         return;
 
-    const auto secondsPerBar = deckOneBeatGrid->secondsPerBeat * static_cast<double>(std::max(1, deckOneBeatGrid->beatsPerBar));
-    deckPlaybackEngine.configureGridPlayback(secondsPerBar, deckOneBeatGrid->firstBeatOffsetSeconds, deckOneLaunchOffsetBars);
-    deckPlaybackEngine.setGlobalBpm(deckOneBeatGrid->bpm > 0 ? static_cast<double>(deckOneBeatGrid->bpm) : deckOneBeatGrid->tempo,
-        deckOneBeatGrid->beatsPerBar);
+    const auto secondsPerBar = beatGrid->secondsPerBeat * static_cast<double>(std::max(1, beatGrid->beatsPerBar));
+    auto& playbackEngine = playbackEngineFor(deckId);
+    playbackEngine.configureGridPlayback(secondsPerBar, beatGrid->firstBeatOffsetSeconds, deckLaunchOffsetBars[slot]);
+
+    const auto snapshot = workspaceController.createSnapshot();
+    playbackEngine.setGlobalBpm(snapshot.bpm, beatGrid->beatsPerBar);
+    playbackEngine.setCurrentGridBarPosition(transportGridBarPosition);
+}
+
+void MainComponent::setTransportGridBarPosition(double gridBarPosition)
+{
+    transportGridBarPosition = std::max(0.0, gridBarPosition);
+
+    for (auto& playbackEngine : deckPlaybackEngines)
+        playbackEngine.setCurrentGridBarPosition(transportGridBarPosition);
+}
+
+void MainComponent::updateDeckPlayingState()
+{
+    for (const auto deckId : { model::DeckId::A, model::DeckId::B, model::DeckId::C })
+        workspaceController.dispatch(engine::SetDeckPlayingCommand { deckId, playbackEngineFor(deckId).isPlaying() });
+}
+
+engine::DeckPlaybackEngine& MainComponent::playbackEngineFor(model::DeckId deckId) noexcept
+{
+    return deckPlaybackEngines[deckSlot(deckId)];
+}
+
+const engine::DeckPlaybackEngine& MainComponent::playbackEngineFor(model::DeckId deckId) const noexcept
+{
+    return deckPlaybackEngines[deckSlot(deckId)];
+}
+
+std::optional<double> MainComponent::firstPlayingGridBarPosition() const
+{
+    for (const auto deckId : { model::DeckId::A, model::DeckId::B, model::DeckId::C })
+    {
+        const auto& playbackEngine = playbackEngineFor(deckId);
+        if (playbackEngine.isPlaying())
+            return playbackEngine.getCurrentGridBarPosition();
+    }
+
+    return std::nullopt;
 }
 
 void MainComponent::refreshWorkspaceSnapshot()
