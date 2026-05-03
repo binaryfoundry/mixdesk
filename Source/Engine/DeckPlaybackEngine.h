@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Engine/StemPreparation.h"
 #include "Model/PhraseModel.h"
 
 #include <juce_audio_utils/juce_audio_utils.h>
@@ -17,10 +18,7 @@ public:
     ~DeckPlaybackEngine() override;
 
     [[nodiscard]] bool loadFile(const juce::File& file);
-    [[nodiscard]] bool loadStemSet(const juce::File& instrumentalFile,
-        const juce::File& drumStemFile,
-        const juce::File& bassStemFile,
-        const juce::File& vocalStemFile);
+    [[nodiscard]] bool loadPreparedStemSet(PreparedStemSet preparedStems);
     void start();
     void stop();
     void togglePlayback();
@@ -40,12 +38,6 @@ public:
     void getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferToFill) override;
     void releaseResources() override;
 
-    struct PlaybackBuffer
-    {
-        juce::AudioBuffer<float> audio;
-        double sampleRate {};
-    };
-
 private:
     void resetTimeStretch(double playbackRate);
     void ensureStretchBuffers(int inputSamples, int outputSamples);
@@ -53,10 +45,7 @@ private:
     mutable juce::CriticalSection lock;
     juce::AudioFormatManager formatManager;
     signalsmith::stretch::SignalsmithStretch<float> timeStretch;
-    PlaybackBuffer residualInstrumental;
-    PlaybackBuffer drums;
-    PlaybackBuffer bass;
-    PlaybackBuffer vocal;
+    PreparedStemSet stems;
     juce::File loadedFile;
     double outputSampleRate {};
     double currentPositionSeconds {};

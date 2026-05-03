@@ -62,6 +62,8 @@ target_sources(MixdeskPhraseWorkspace
         Source/Engine/DeckPlaybackEngine.h
         Source/Engine/PhraseAnalyzer.cpp
         Source/Engine/PhraseAnalyzer.h
+        Source/Engine/StemPreparation.cpp
+        Source/Engine/StemPreparation.h
         Source/Engine/TrackLoader.cpp
         Source/Engine/TrackLoader.h
         Source/Engine/WaveformAnalyzer.cpp
@@ -109,6 +111,8 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}/Source" PREFIX "Source" FILES
     Source/Engine/DeckPlaybackEngine.h
     Source/Engine/PhraseAnalyzer.cpp
     Source/Engine/PhraseAnalyzer.h
+    Source/Engine/StemPreparation.cpp
+    Source/Engine/StemPreparation.h
     Source/Engine/TrackLoader.cpp
     Source/Engine/TrackLoader.h
     Source/Engine/WaveformAnalyzer.cpp
@@ -122,3 +126,36 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}/Source" PREFIX "Source" FILES
     Source/UI/PhraseWorkspace.cpp
     Source/UI/PhraseWorkspace.h
 )
+
+enable_testing()
+
+add_executable(MixdeskStemTests
+    Tests/StemPreparationTests.cpp
+    Source/Engine/StemPreparation.cpp
+    Source/Engine/StemPreparation.h
+    Source/Model/PhraseModel.cpp
+    Source/Model/PhraseModel.h
+)
+
+target_include_directories(MixdeskStemTests
+    PRIVATE
+        Source
+)
+
+target_compile_definitions(MixdeskStemTests
+    PRIVATE
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_USE_MP3AUDIOFORMAT=1
+)
+
+target_link_libraries(MixdeskStemTests
+    PRIVATE
+        juce::juce_audio_formats
+        juce::juce_audio_basics
+        juce::juce_core
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_warning_flags
+)
+
+add_test(NAME MixdeskStemTests COMMAND MixdeskStemTests)

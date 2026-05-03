@@ -3,6 +3,7 @@
 #include "Engine/BeatDetector.h"
 #include "Engine/DeckPlaybackEngine.h"
 #include "Engine/PhraseAnalyzer.h"
+#include "Engine/StemPreparation.h"
 #include "Engine/TrackLoader.h"
 #include "Engine/WaveformAnalyzer.h"
 #include "Engine/WorkspaceController.h"
@@ -37,6 +38,7 @@ private:
     engine::WorkspaceController workspaceController;
     engine::BeatDetector beatDetector;
     engine::PhraseAnalyzer phraseAnalyzer;
+    engine::StemPreparation stemPreparation;
     engine::WaveformAnalyzer waveformAnalyzer;
     engine::DeckPlaybackEngine deckPlaybackEngine;
     std::unique_ptr<ui::PhraseWorkspace> phraseWorkspace;

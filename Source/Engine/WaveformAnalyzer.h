@@ -14,6 +14,10 @@ public:
     [[nodiscard]] model::StemWaveform analyzeStem(const juce::File& stemFile,
         model::StemType stemType,
         double pointsPerSecond = 40.0);
+    [[nodiscard]] model::StemWaveform analyzeBuffer(const juce::AudioBuffer<float>& audio,
+        double sampleRate,
+        model::StemType stemType,
+        double pointsPerSecond = 40.0);
 
 private:
     juce::AudioFormatManager formatManager;

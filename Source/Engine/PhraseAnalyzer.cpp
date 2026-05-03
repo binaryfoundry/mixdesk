@@ -240,7 +240,7 @@ std::vector<model::PhraseBlock> PhraseAnalyzer::analyze(const model::BeatGrid& b
 
     const auto drumStem = findStem(stemWaveforms, model::StemType::Drums);
     const auto bassStem = findStem(stemWaveforms, model::StemType::Bass);
-    const auto vocalStem = findStem(stemWaveforms, model::StemType::Vocal);
+    const auto vocalStem = findStem(stemWaveforms, model::StemType::Vocals);
     const auto barCount = std::max(1, static_cast<int>(std::floor((beatGrid.durationSeconds - beatGrid.firstBeatOffsetSeconds) / secondsPerBar)));
 
     std::vector<BarEnergy> bars(static_cast<std::size_t>(barCount));

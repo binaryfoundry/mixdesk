@@ -79,4 +79,41 @@ model::StemWaveform WaveformAnalyzer::analyzeStem(const juce::File& stemFile,
 
     return waveform;
 }
+
+model::StemWaveform WaveformAnalyzer::analyzeBuffer(const juce::AudioBuffer<float>& audio,
+    double sampleRate,
+    model::StemType stemType,
+    double pointsPerSecond)
+{
+    model::StemWaveform waveform;
+    waveform.type = stemType;
+    waveform.pointsPerSecond = std::max(1.0, pointsPerSecond);
+
+    if (audio.getNumSamples() <= 0 || audio.getNumChannels() <= 0 || sampleRate <= 0.0)
+        return waveform;
+
+    waveform.durationSeconds = static_cast<double>(audio.getNumSamples()) / sampleRate;
+    const auto pointCount = std::max<std::size_t>(1,
+        static_cast<std::size_t>(std::ceil(waveform.durationSeconds * waveform.pointsPerSecond)));
+    waveform.peaks.assign(pointCount, 0.0f);
+
+    for (auto sampleIndex = 0; sampleIndex < audio.getNumSamples(); ++sampleIndex)
+    {
+        const auto pointIndex = std::min<std::size_t>(
+            waveform.peaks.size() - 1,
+            static_cast<std::size_t>((static_cast<juce::int64>(sampleIndex) * static_cast<juce::int64>(waveform.peaks.size()))
+                / std::max(1, audio.getNumSamples())));
+
+        waveform.peaks[pointIndex] = std::max(waveform.peaks[pointIndex], samplePeakAt(audio, sampleIndex));
+    }
+
+    // Display-only normalization: raw stem buffers used for residual math are never
+    // normalized independently.
+    const auto maximumPeak = *std::max_element(waveform.peaks.begin(), waveform.peaks.end());
+    if (maximumPeak > 0.0f)
+        for (auto& peak : waveform.peaks)
+            peak /= maximumPeak;
+
+    return waveform;
+}
 } // namespace mixdesk::engine

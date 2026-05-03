@@ -13,7 +13,7 @@ constexpr auto loadedTrackTitleHeight = 34.0f;
 constexpr auto loadedTrackTitleGap = 6.0f;
 constexpr auto minGlobalBpm = 80.0;
 constexpr auto maxGlobalBpm = 180.0;
-constexpr std::array stemToggleOrder { model::StemType::Drums, model::StemType::Bass, model::StemType::Vocal };
+constexpr std::array stemToggleOrder { model::StemType::Drums, model::StemType::Bass, model::StemType::MusicResidual, model::StemType::Vocals };
 
 juce::Colour backgroundColour() { return juce::Colour(0xff101318); }
 juce::Colour panelColour() { return juce::Colour(0xff171c22); }
@@ -26,6 +26,7 @@ juce::Colour strongGridLineColour() { return juce::Colour(0xff5d6972); }
 juce::Colour phraseBoundaryColour() { return juce::Colour(0xff8da0aa); }
 juce::Colour drumWaveformColour() { return juce::Colour(0xff35c4ff); }
 juce::Colour bassWaveformColour() { return juce::Colour(0xffffc247); }
+juce::Colour musicWaveformColour() { return juce::Colour(0xff7fd86b); }
 juce::Colour vocalWaveformColour() { return juce::Colour(0xffff6fb2); }
 
 bool isMultipleOf(int value, int interval) noexcept
@@ -68,7 +69,7 @@ bool activeVocal(const model::DeckTimeline& deck, const model::PhraseBlock& bloc
 {
     return deckIsActive(deck)
         && block.hasVocal
-        && model::isStemEnabled(deck.stemEnabled, model::StemType::Vocal);
+        && model::isStemEnabled(deck.stemEnabled, model::StemType::Vocals);
 }
 
 juce::Colour phraseColour(model::PhraseType type)
@@ -92,9 +93,12 @@ juce::Colour stemColour(model::StemType type)
 {
     switch (type)
     {
+        case model::StemType::FullMix: return textColour();
         case model::StemType::Drums: return drumWaveformColour();
         case model::StemType::Bass: return bassWaveformColour();
-        case model::StemType::Vocal: return vocalWaveformColour();
+        case model::StemType::Vocals: return vocalWaveformColour();
+        case model::StemType::InstrumentalOriginal: return mutedTextColour();
+        case model::StemType::MusicResidual: return musicWaveformColour();
     }
 
     return juce::Colours::white;
@@ -113,9 +117,12 @@ juce::String stemShortLabel(model::StemType stemType)
 {
     switch (stemType)
     {
+        case model::StemType::FullMix: return "F";
         case model::StemType::Drums: return "D";
         case model::StemType::Bass: return "B";
-        case model::StemType::Vocal: return "V";
+        case model::StemType::Vocals: return "V";
+        case model::StemType::InstrumentalOriginal: return "I";
+        case model::StemType::MusicResidual: return "M";
     }
 
     return "?";
@@ -931,7 +938,7 @@ void PhraseWorkspace::drawStemWaveforms(juce::Graphics& g, const model::DeckTime
     const auto* beatGrid = deck.beatGrid.has_value() ? &*deck.beatGrid : nullptr;
     const auto visibleStart = viewStartBar;
     const auto visibleEnd = visibleEndBar();
-    constexpr std::array drawOrder { model::StemType::Drums, model::StemType::Bass, model::StemType::Vocal };
+    constexpr std::array drawOrder { model::StemType::Drums, model::StemType::Bass, model::StemType::MusicResidual, model::StemType::Vocals };
     const auto rowGap = 5.0f;
     const auto rowHeight = (bed.getHeight() - (rowGap * static_cast<float>(drawOrder.size() - 1)))
         / static_cast<float>(drawOrder.size());

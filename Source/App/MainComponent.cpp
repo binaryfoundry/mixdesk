@@ -153,8 +153,15 @@ void MainComponent::loadDeckOneFromTracksFolder()
     if (! bundle.has_value())
         return;
 
-    if (! deckPlaybackEngine.loadStemSet(bundle->instrumentalStemFile, bundle->drumStemFile, bundle->bassStemFile, bundle->vocalStemFile)
-        && ! deckPlaybackEngine.loadFile(bundle->primaryAudioFile))
+    auto preparedStemSet = stemPreparation.loadPreparedStemSet(bundle->primaryAudioFile,
+        bundle->instrumentalStemFile,
+        bundle->drumStemFile,
+        bundle->bassStemFile,
+        bundle->vocalStemFile);
+    juce::Logger::writeToLog("Stem preparation: " + preparedStemSet.message);
+
+    const auto hasPreparedStemSet = preparedStemSet.succeeded;
+    if (! hasPreparedStemSet && ! deckPlaybackEngine.loadFile(bundle->primaryAudioFile))
         return;
 
     auto analysis = beatDetector.analyzeDrumStem(bundle->drumStemFile);
@@ -177,25 +184,70 @@ void MainComponent::loadDeckOneFromTracksFolder()
     }
 
     auto track = bundle->loadedTrack;
+    if (hasPreparedStemSet)
+    {
+        track.stems = engine::createModelStemSet(preparedStemSet.stems);
+        track.fullMixPath = track.stems.fullMixPath.value_or(std::string());
+        track.instrumentalStemPath = track.stems.instrumentalOriginalPath.value_or(std::string());
+        track.drumStemPath = track.stems.drumsPath.value_or(std::string());
+        track.bassStemPath = track.stems.bassPath.value_or(std::string());
+        track.vocalStemPath = track.stems.vocalsPath.value_or(std::string());
+        track.musicResidualStemPath = track.stems.musicResidualPath.value_or(std::string());
+    }
+
     if (track.durationSeconds <= 0.0)
-        track.durationSeconds = deckPlaybackEngine.getLengthSeconds();
+    {
+        track.durationSeconds = hasPreparedStemSet
+            ? engine::preparedStemSetDurationSeconds(preparedStemSet.stems)
+            : deckPlaybackEngine.getLengthSeconds();
+    }
 
     analysis.beatGrid.durationSeconds = track.durationSeconds > 0.0 ? track.durationSeconds : analysis.beatGrid.durationSeconds;
     deckOneBeatGrid = analysis.beatGrid;
-    configureDeckOneGridPlayback();
 
     // TODO(waveform rendering): move this load-time analysis onto a background job once track loading is interactive.
     std::vector<model::StemWaveform> stemWaveforms;
-    stemWaveforms.reserve(3);
-    stemWaveforms.push_back(waveformAnalyzer.analyzeStem(bundle->drumStemFile, model::StemType::Drums));
+    stemWaveforms.reserve(4);
 
-    if (bundle->bassStemFile.existsAsFile())
-        stemWaveforms.push_back(waveformAnalyzer.analyzeStem(bundle->bassStemFile, model::StemType::Bass));
+    if (hasPreparedStemSet)
+    {
+        if (preparedStemSet.stems.drums.hasAudio())
+            stemWaveforms.push_back(waveformAnalyzer.analyzeBuffer(preparedStemSet.stems.drums.audio,
+                preparedStemSet.stems.drums.sampleRate,
+                model::StemType::Drums));
 
-    if (bundle->vocalStemFile.existsAsFile())
-        stemWaveforms.push_back(waveformAnalyzer.analyzeStem(bundle->vocalStemFile, model::StemType::Vocal));
+        if (preparedStemSet.stems.bass.hasAudio())
+            stemWaveforms.push_back(waveformAnalyzer.analyzeBuffer(preparedStemSet.stems.bass.audio,
+                preparedStemSet.stems.bass.sampleRate,
+                model::StemType::Bass));
+
+        if (preparedStemSet.stems.musicResidual.hasAudio())
+            stemWaveforms.push_back(waveformAnalyzer.analyzeBuffer(preparedStemSet.stems.musicResidual.audio,
+                preparedStemSet.stems.musicResidual.sampleRate,
+                model::StemType::MusicResidual));
+
+        if (preparedStemSet.stems.vocals.hasAudio())
+            stemWaveforms.push_back(waveformAnalyzer.analyzeBuffer(preparedStemSet.stems.vocals.audio,
+                preparedStemSet.stems.vocals.sampleRate,
+                model::StemType::Vocals));
+    }
+    else
+    {
+        stemWaveforms.push_back(waveformAnalyzer.analyzeStem(bundle->drumStemFile, model::StemType::Drums));
+
+        if (bundle->bassStemFile.existsAsFile())
+            stemWaveforms.push_back(waveformAnalyzer.analyzeStem(bundle->bassStemFile, model::StemType::Bass));
+
+        if (bundle->vocalStemFile.existsAsFile())
+            stemWaveforms.push_back(waveformAnalyzer.analyzeStem(bundle->vocalStemFile, model::StemType::Vocals));
+    }
 
     auto phraseBlocks = phraseAnalyzer.analyze(analysis.beatGrid, stemWaveforms, 8);
+
+    if (hasPreparedStemSet && ! deckPlaybackEngine.loadPreparedStemSet(std::move(preparedStemSet.stems)))
+        return;
+
+    configureDeckOneGridPlayback();
 
     workspaceController.dispatch(engine::SetDeckLoadedTrackCommand {
         model::DeckId::A,

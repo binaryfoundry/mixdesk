@@ -52,21 +52,39 @@ std::string_view toString(StemType type) noexcept
 {
     switch (type)
     {
+        case StemType::FullMix: return "Full Mix";
         case StemType::Drums: return "Drums";
         case StemType::Bass: return "Bass";
-        case StemType::Vocal: return "Vocal";
+        case StemType::Vocals: return "Vocals";
+        case StemType::InstrumentalOriginal: return "Instrumental Original";
+        case StemType::MusicResidual: return "Music";
     }
 
     return "Stem";
+}
+
+std::string_view toString(StemDerivationMethod method) noexcept
+{
+    switch (method)
+    {
+        case StemDerivationMethod::FromFullMixMinusDrumsBassVocals: return "FullMix - Drums - Bass - Vocals";
+        case StemDerivationMethod::FromInstrumentalMinusDrumsBass: return "Instrumental - Drums - Bass";
+        case StemDerivationMethod::Unavailable: return "Unavailable";
+    }
+
+    return "Unavailable";
 }
 
 bool isStemEnabled(const StemEnableState& stemState, StemType stemType) noexcept
 {
     switch (stemType)
     {
+        case StemType::FullMix: return areAllPublicStemsEnabled(stemState);
         case StemType::Drums: return stemState.drums;
         case StemType::Bass: return stemState.bass;
-        case StemType::Vocal: return stemState.vocal;
+        case StemType::Vocals: return stemState.vocals;
+        case StemType::InstrumentalOriginal: return false;
+        case StemType::MusicResidual: return stemState.music;
     }
 
     return true;
@@ -76,16 +94,49 @@ void setStemEnabled(StemEnableState& stemState, StemType stemType, bool enabled)
 {
     switch (stemType)
     {
+        case StemType::FullMix:
+            stemState.drums = enabled;
+            stemState.bass = enabled;
+            stemState.music = enabled;
+            stemState.vocals = enabled;
+            break;
         case StemType::Drums:
             stemState.drums = enabled;
             break;
         case StemType::Bass:
             stemState.bass = enabled;
             break;
-        case StemType::Vocal:
-            stemState.vocal = enabled;
+        case StemType::Vocals:
+            stemState.vocals = enabled;
+            break;
+        case StemType::InstrumentalOriginal:
+            break;
+        case StemType::MusicResidual:
+            stemState.music = enabled;
             break;
     }
+}
+
+bool isPublicPlayableStem(StemType stemType) noexcept
+{
+    switch (stemType)
+    {
+        case StemType::Drums:
+        case StemType::Bass:
+        case StemType::Vocals:
+        case StemType::MusicResidual:
+            return true;
+        case StemType::FullMix:
+        case StemType::InstrumentalOriginal:
+            return false;
+    }
+
+    return false;
+}
+
+bool areAllPublicStemsEnabled(const StemEnableState& stemState) noexcept
+{
+    return stemState.drums && stemState.bass && stemState.music && stemState.vocals;
 }
 
 DeckRole nextRole(DeckRole role) noexcept

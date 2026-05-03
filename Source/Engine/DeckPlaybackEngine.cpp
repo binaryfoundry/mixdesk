@@ -2,28 +2,17 @@
 
 #include <algorithm>
 #include <cmath>
-#include <limits>
-#include <optional>
 
 namespace mixdesk::engine
 {
 namespace
 {
-struct LoadedAudio
+double bufferDurationSeconds(const StemAudioBuffer& buffer)
 {
-    juce::AudioBuffer<float> audio;
-    double sampleRate {};
-};
-
-double bufferDurationSeconds(const DeckPlaybackEngine::PlaybackBuffer& buffer)
-{
-    if (buffer.sampleRate <= 0.0 || buffer.audio.getNumSamples() <= 0)
-        return 0.0;
-
-    return static_cast<double>(buffer.audio.getNumSamples()) / buffer.sampleRate;
+    return stemDurationSeconds(buffer);
 }
 
-float sampleAt(const DeckPlaybackEngine::PlaybackBuffer& buffer, int channel, double timeSeconds)
+float sampleAt(const StemAudioBuffer& buffer, int channel, double timeSeconds)
 {
     if (buffer.sampleRate <= 0.0 || buffer.audio.getNumChannels() <= 0 || buffer.audio.getNumSamples() <= 0 || timeSeconds < 0.0)
         return 0.0f;
@@ -40,30 +29,6 @@ float sampleAt(const DeckPlaybackEngine::PlaybackBuffer& buffer, int channel, do
     const auto end = buffer.audio.getSample(sourceChannel, nextIndex);
 
     return start + ((end - start) * fraction);
-}
-
-void subtractStem(DeckPlaybackEngine::PlaybackBuffer& residual, const DeckPlaybackEngine::PlaybackBuffer& stem)
-{
-    if (residual.audio.getNumSamples() <= 0 || stem.audio.getNumSamples() <= 0 || residual.sampleRate <= 0.0)
-        return;
-
-    for (auto channel = 0; channel < residual.audio.getNumChannels(); ++channel)
-    {
-        auto* residualSamples = residual.audio.getWritePointer(channel);
-        for (auto sample = 0; sample < residual.audio.getNumSamples(); ++sample)
-        {
-            const auto timeSeconds = static_cast<double>(sample) / residual.sampleRate;
-            residualSamples[sample] -= sampleAt(stem, channel, timeSeconds);
-        }
-    }
-}
-
-double maxDurationSeconds(const DeckPlaybackEngine::PlaybackBuffer& a,
-    const DeckPlaybackEngine::PlaybackBuffer& b,
-    const DeckPlaybackEngine::PlaybackBuffer& c,
-    const DeckPlaybackEngine::PlaybackBuffer& d)
-{
-    return std::max({ bufferDurationSeconds(a), bufferDurationSeconds(b), bufferDurationSeconds(c), bufferDurationSeconds(d) });
 }
 
 double gridBarToTrackSeconds(double gridBarPosition, double secondsPerBar, double firstBeatOffsetSeconds, int launchOffsetBars)
@@ -98,18 +63,18 @@ double bpmToSecondsPerBar(double bpm, int beatsPerBar)
     return (60.0 / bpm) * static_cast<double>(std::max(1, beatsPerBar));
 }
 
-float mixedSampleAt(const DeckPlaybackEngine::PlaybackBuffer& residualInstrumental,
-    const DeckPlaybackEngine::PlaybackBuffer& drums,
-    const DeckPlaybackEngine::PlaybackBuffer& bass,
-    const DeckPlaybackEngine::PlaybackBuffer& vocal,
+float mixedSampleAt(const PreparedStemSet& stems,
     const model::StemEnableState& stemEnabled,
     int channel,
     double timeSeconds)
 {
-    return sampleAt(residualInstrumental, channel, timeSeconds)
-        + (stemEnabled.drums ? sampleAt(drums, channel, timeSeconds) : 0.0f)
-        + (stemEnabled.bass ? sampleAt(bass, channel, timeSeconds) : 0.0f)
-        + (stemEnabled.vocal ? sampleAt(vocal, channel, timeSeconds) : 0.0f);
+    if (canUseFullMixForPlayback(stems, stemEnabled))
+        return sampleAt(stems.fullMix, channel, timeSeconds);
+
+    return (stemEnabled.drums ? sampleAt(stems.drums, channel, timeSeconds) : 0.0f)
+        + (stemEnabled.bass ? sampleAt(stems.bass, channel, timeSeconds) : 0.0f)
+        + (stemEnabled.music ? sampleAt(stems.musicResidual, channel, timeSeconds) : 0.0f)
+        + (stemEnabled.vocals ? sampleAt(stems.vocals, channel, timeSeconds) : 0.0f);
 }
 } // namespace
 
@@ -124,51 +89,24 @@ DeckPlaybackEngine::~DeckPlaybackEngine()
     playing = false;
 }
 
-std::optional<LoadedAudio> readAudioFile(juce::AudioFormatManager& formatManager, const juce::File& file)
-{
-    if (! file.existsAsFile())
-        return std::nullopt;
-
-    std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(file));
-    if (reader == nullptr || reader->lengthInSamples <= 0)
-        return std::nullopt;
-
-    LoadedAudio loadedAudio;
-    loadedAudio.audio.setSize(static_cast<int>(std::min<juce::int64>(reader->numChannels, 2)),
-        static_cast<int>(std::min<juce::int64>(reader->lengthInSamples, std::numeric_limits<int>::max())),
-        false,
-        true,
-        false);
-    loadedAudio.sampleRate = reader->sampleRate;
-    reader->read(&loadedAudio.audio, 0, loadedAudio.audio.getNumSamples(), 0, true, true);
-
-    return loadedAudio;
-}
-
 bool DeckPlaybackEngine::loadFile(const juce::File& file)
 {
-    auto loadedAudio = readAudioFile(formatManager, file);
+    auto loadedAudio = readStemAudioFile(formatManager, file, model::StemType::FullMix);
     if (! loadedAudio.has_value())
         return false;
-
-    PlaybackBuffer fullMix;
-    fullMix.audio = std::move(loadedAudio->audio);
-    fullMix.sampleRate = loadedAudio->sampleRate;
 
     {
         const juce::ScopedLock scopedLock(lock);
         // TODO(real audio engine): move deck loading to an engine command queue and publish
         // a prepared-source snapshot instead of swapping buffers directly from the UI domain.
-        residualInstrumental = std::move(fullMix);
-        drums = {};
-        bass = {};
-        vocal = {};
+        stems = {};
+        stems.fullMix = std::move(*loadedAudio);
         loadedFile = file;
         currentPositionSeconds = 0.0;
         currentGridBarPosition = trackSecondsToGridBar(currentPositionSeconds, deckSecondsPerBar, firstBeatOffsetSeconds, launchOffsetBars);
         stretchInputPositionSeconds = currentPositionSeconds;
         stretchInputRemainderSamples = 0.0;
-        lengthSeconds = bufferDurationSeconds(residualInstrumental);
+        lengthSeconds = bufferDurationSeconds(stems.fullMix);
         playing = false;
         loaded = lengthSeconds > 0.0;
         timeStretchNeedsReset = true;
@@ -177,63 +115,24 @@ bool DeckPlaybackEngine::loadFile(const juce::File& file)
     return loaded;
 }
 
-bool DeckPlaybackEngine::loadStemSet(const juce::File& instrumentalFile,
-    const juce::File& drumStemFile,
-    const juce::File& bassStemFile,
-    const juce::File& vocalStemFile)
+bool DeckPlaybackEngine::loadPreparedStemSet(PreparedStemSet preparedStems)
 {
-    auto instrumentalAudio = readAudioFile(formatManager, instrumentalFile);
-    if (! instrumentalAudio.has_value())
+    const auto preparedLengthSeconds = preparedStemSetDurationSeconds(preparedStems);
+    if (preparedLengthSeconds <= 0.0)
         return false;
-
-    auto drumAudio = readAudioFile(formatManager, drumStemFile);
-    auto bassAudio = readAudioFile(formatManager, bassStemFile);
-    auto vocalAudio = readAudioFile(formatManager, vocalStemFile);
-
-    PlaybackBuffer residual;
-    residual.audio = std::move(instrumentalAudio->audio);
-    residual.sampleRate = instrumentalAudio->sampleRate;
-
-    PlaybackBuffer drumBuffer;
-    if (drumAudio.has_value())
-    {
-        drumBuffer.audio = std::move(drumAudio->audio);
-        drumBuffer.sampleRate = drumAudio->sampleRate;
-    }
-
-    PlaybackBuffer bassBuffer;
-    if (bassAudio.has_value())
-    {
-        bassBuffer.audio = std::move(bassAudio->audio);
-        bassBuffer.sampleRate = bassAudio->sampleRate;
-    }
-
-    PlaybackBuffer vocalBuffer;
-    if (vocalAudio.has_value())
-    {
-        vocalBuffer.audio = std::move(vocalAudio->audio);
-        vocalBuffer.sampleRate = vocalAudio->sampleRate;
-    }
-
-    // The supplied instrumental stem contains the rhythm bed. Keep the playback layers
-    // independent by deriving a residual "music bed" before the audio thread sees it.
-    subtractStem(residual, drumBuffer);
-    subtractStem(residual, bassBuffer);
 
     {
         const juce::ScopedLock scopedLock(lock);
         // TODO(real audio engine): publish an immutable prepared-stem snapshot to the audio
-        // thread instead of replacing these buffers under a lock.
-        residualInstrumental = std::move(residual);
-        drums = std::move(drumBuffer);
-        bass = std::move(bassBuffer);
-        vocal = std::move(vocalBuffer);
-        loadedFile = instrumentalFile;
+        // thread instead of replacing these buffers under a lock. MusicResidual has already
+        // been derived offline by StemPreparation before this point.
+        stems = std::move(preparedStems);
+        loadedFile = stems.fullMix.sourceFile.existsAsFile() ? stems.fullMix.sourceFile : stems.instrumentalOriginal.sourceFile;
         currentPositionSeconds = 0.0;
         currentGridBarPosition = trackSecondsToGridBar(currentPositionSeconds, deckSecondsPerBar, firstBeatOffsetSeconds, launchOffsetBars);
         stretchInputPositionSeconds = currentPositionSeconds;
         stretchInputRemainderSamples = 0.0;
-        lengthSeconds = maxDurationSeconds(residualInstrumental, drums, bass, vocal);
+        lengthSeconds = preparedLengthSeconds;
         playing = false;
         loaded = lengthSeconds > 0.0;
         timeStretchNeedsReset = true;
@@ -388,8 +287,8 @@ void DeckPlaybackEngine::getNextAudioBlock(const juce::AudioSourceChannelInfo& b
     for (auto inputSample = 0; inputSample < inputSamples; ++inputSample)
     {
         const auto timeSeconds = stretchInputPositionSeconds + (static_cast<double>(inputSample) / outputSampleRate);
-        stretchInputBuffer.setSample(0, inputSample, mixedSampleAt(residualInstrumental, drums, bass, vocal, stemEnabled, 0, timeSeconds));
-        stretchInputBuffer.setSample(1, inputSample, mixedSampleAt(residualInstrumental, drums, bass, vocal, stemEnabled, 1, timeSeconds));
+        stretchInputBuffer.setSample(0, inputSample, mixedSampleAt(stems, stemEnabled, 0, timeSeconds));
+        stretchInputBuffer.setSample(1, inputSample, mixedSampleAt(stems, stemEnabled, 1, timeSeconds));
     }
 
     stretchInputPositionSeconds += static_cast<double>(inputSamples) / outputSampleRate;

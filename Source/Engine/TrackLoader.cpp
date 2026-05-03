@@ -140,10 +140,16 @@ std::optional<TrackBundle> loadTrackBundleFromMixdeskJson(const juce::File& meta
     model::LoadedTrack loadedTrack;
     loadedTrack.name = trackName.isNotEmpty() ? trackName.toStdString() : metadataFile.getParentDirectory().getFileName().toStdString();
     loadedTrack.audioPath = primaryAudioFile.getFullPathName().toStdString();
+    loadedTrack.fullMixPath = primaryAudioFile.existsAsFile() ? primaryAudioFile.getFullPathName().toStdString() : std::string();
     loadedTrack.instrumentalStemPath = instrumentalStemFile.existsAsFile() ? instrumentalStemFile.getFullPathName().toStdString() : std::string();
     loadedTrack.drumStemPath = drumStemFile.getFullPathName().toStdString();
     loadedTrack.bassStemPath = bassStemFile.existsAsFile() ? bassStemFile.getFullPathName().toStdString() : std::string();
     loadedTrack.vocalStemPath = vocalStemFile.existsAsFile() ? vocalStemFile.getFullPathName().toStdString() : std::string();
+    loadedTrack.stems.fullMixPath = primaryAudioFile.existsAsFile() ? std::optional<std::string>(primaryAudioFile.getFullPathName().toStdString()) : std::nullopt;
+    loadedTrack.stems.instrumentalOriginalPath = instrumentalStemFile.existsAsFile() ? std::optional<std::string>(instrumentalStemFile.getFullPathName().toStdString()) : std::nullopt;
+    loadedTrack.stems.drumsPath = drumStemFile.existsAsFile() ? std::optional<std::string>(drumStemFile.getFullPathName().toStdString()) : std::nullopt;
+    loadedTrack.stems.bassPath = bassStemFile.existsAsFile() ? std::optional<std::string>(bassStemFile.getFullPathName().toStdString()) : std::nullopt;
+    loadedTrack.stems.vocalsPath = vocalStemFile.existsAsFile() ? std::optional<std::string>(vocalStemFile.getFullPathName().toStdString()) : std::nullopt;
     loadedTrack.key = drumKey.toStdString();
     loadedTrack.durationSeconds = duration;
 

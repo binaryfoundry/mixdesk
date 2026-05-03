@@ -39,16 +39,39 @@ enum class PhraseType
 
 enum class StemType
 {
+    FullMix,
     Drums,
     Bass,
-    Vocal
+    Vocals,
+    InstrumentalOriginal,
+    MusicResidual
+};
+
+enum class StemDerivationMethod
+{
+    FromFullMixMinusDrumsBassVocals,
+    FromInstrumentalMinusDrumsBass,
+    Unavailable
 };
 
 struct StemEnableState
 {
     bool drums { true };
     bool bass { true };
-    bool vocal { true };
+    bool music { true };
+    bool vocals { true };
+};
+
+struct StemSet
+{
+    std::optional<std::string> fullMixPath;
+    std::optional<std::string> drumsPath;
+    std::optional<std::string> bassPath;
+    std::optional<std::string> vocalsPath;
+    std::optional<std::string> instrumentalOriginalPath;
+    std::optional<std::string> musicResidualPath;
+    StemDerivationMethod musicResidualDerivation { StemDerivationMethod::Unavailable };
+    std::string musicResidualDerivationDetails;
 };
 
 struct PhraseBlock
@@ -86,10 +109,13 @@ struct LoadedTrack
 {
     std::string name;
     std::string audioPath;
+    std::string fullMixPath;
     std::string instrumentalStemPath;
     std::string drumStemPath;
     std::string bassStemPath;
     std::string vocalStemPath;
+    std::string musicResidualStemPath;
+    StemSet stems;
     std::string key;
     double durationSeconds { 0.0 };
 };
@@ -123,9 +149,12 @@ std::string_view toString(DeckId deckId) noexcept;
 std::string_view toString(DeckRole role) noexcept;
 std::string_view toString(PhraseType type) noexcept;
 std::string_view toString(StemType type) noexcept;
+std::string_view toString(StemDerivationMethod method) noexcept;
 
 bool isStemEnabled(const StemEnableState& stemState, StemType stemType) noexcept;
 void setStemEnabled(StemEnableState& stemState, StemType stemType, bool enabled) noexcept;
+bool isPublicPlayableStem(StemType stemType) noexcept;
+bool areAllPublicStemsEnabled(const StemEnableState& stemState) noexcept;
 DeckRole nextRole(DeckRole role) noexcept;
 
 DeckTimeline* findDeck(WorkspaceState& state, DeckId deckId) noexcept;
