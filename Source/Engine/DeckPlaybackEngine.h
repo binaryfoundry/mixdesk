@@ -39,10 +39,11 @@ public:
     void prepareToPlay(int samplesPerBlockExpected, double sampleRate) override;
     void getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferToFill) override;
     void addNextAudioBlock(const juce::AudioSourceChannelInfo& bufferToFill);
+    void addNextAudioBlockAtGrid(const juce::AudioSourceChannelInfo& bufferToFill, double gridStartBar);
     void releaseResources() override;
 
 private:
-    void renderNextAudioBlock(const juce::AudioSourceChannelInfo& bufferToFill, bool replaceOutput);
+    void renderNextAudioBlock(const juce::AudioSourceChannelInfo& bufferToFill, bool replaceOutput, const double* externalGridStartBar = nullptr);
     void resetTimeStretch(double playbackRate);
     void ensureStretchBuffers(int inputSamples, int outputSamples);
 

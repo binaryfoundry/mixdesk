@@ -7,6 +7,8 @@ namespace mixdesk::engine
 {
 namespace
 {
+constexpr auto transportResyncThresholdSeconds = 0.02;
+
 double bufferDurationSeconds(const StemAudioBuffer& buffer)
 {
     return stemDurationSeconds(buffer);
@@ -36,6 +38,8 @@ double gridBarToTrackSeconds(double gridBarPosition, double secondsPerBar, doubl
     if (secondsPerBar <= 0.0)
         return 0.0;
 
+    // launchOffsetBars is the musical first-beat/bar anchor. Audio before the
+    // detected first beat therefore lives at grid positions before the launch bar.
     return firstBeatOffsetSeconds + ((gridBarPosition - static_cast<double>(launchOffsetBars)) * secondsPerBar);
 }
 
@@ -267,7 +271,9 @@ void DeckPlaybackEngine::prepareToPlay(int samplesPerBlockExpected, double sampl
     if (outputSampleRate > 0.0)
     {
         timeStretch.presetDefault(2, static_cast<float>(outputSampleRate));
-        ensureStretchBuffers(std::max(1, samplesPerBlockExpected * 2), std::max(1, samplesPerBlockExpected));
+        const auto maxPrototypePlaybackRatio = 4;
+        const auto inputCapacity = std::max(1, (samplesPerBlockExpected * maxPrototypePlaybackRatio) + timeStretch.inputLatency());
+        ensureStretchBuffers(inputCapacity, std::max(1, samplesPerBlockExpected));
         timeStretchConfigured = true;
         timeStretchNeedsReset = true;
     }
@@ -283,7 +289,14 @@ void DeckPlaybackEngine::addNextAudioBlock(const juce::AudioSourceChannelInfo& b
     renderNextAudioBlock(bufferToFill, false);
 }
 
-void DeckPlaybackEngine::renderNextAudioBlock(const juce::AudioSourceChannelInfo& bufferToFill, bool replaceOutput)
+void DeckPlaybackEngine::addNextAudioBlockAtGrid(const juce::AudioSourceChannelInfo& bufferToFill, double gridStartBar)
+{
+    renderNextAudioBlock(bufferToFill, false, &gridStartBar);
+}
+
+void DeckPlaybackEngine::renderNextAudioBlock(const juce::AudioSourceChannelInfo& bufferToFill,
+    bool replaceOutput,
+    const double* externalGridStartBar)
 {
     const juce::ScopedLock scopedLock(lock);
     if (replaceOutput)
@@ -295,18 +308,31 @@ void DeckPlaybackEngine::renderNextAudioBlock(const juce::AudioSourceChannelInfo
     auto* outputBuffer = bufferToFill.buffer;
     const auto endSample = bufferToFill.startSample + bufferToFill.numSamples;
     const auto playbackRate = playbackRateFor(deckSecondsPerBar, globalSecondsPerBar);
-    const auto exactInputSamples = (static_cast<double>(bufferToFill.numSamples) * playbackRate) + stretchInputRemainderSamples;
-    const auto inputSamples = std::max(1, static_cast<int>(std::floor(exactInputSamples)));
-    stretchInputRemainderSamples = exactInputSamples - static_cast<double>(inputSamples);
+
+    if (externalGridStartBar != nullptr)
+        currentGridBarPosition = std::max(0.0, *externalGridStartBar);
 
     currentPositionSeconds = gridBarToTrackSeconds(currentGridBarPosition, deckSecondsPerBar, firstBeatOffsetSeconds, launchOffsetBars);
+    const auto expectedStretchInputPositionSeconds = currentPositionSeconds
+        + (static_cast<double>(timeStretch.inputLatency()) / outputSampleRate);
+    if (! timeStretchNeedsReset
+        && std::abs(stretchInputPositionSeconds - expectedStretchInputPositionSeconds) > transportResyncThresholdSeconds)
+    {
+        timeStretchNeedsReset = true;
+        stretchInputRemainderSamples = 0.0;
+    }
+
     if (currentPositionSeconds >= lengthSeconds)
     {
         playing = false;
         return;
     }
 
-    ensureStretchBuffers(inputSamples, bufferToFill.numSamples);
+    const auto exactInputSamples = (static_cast<double>(bufferToFill.numSamples) * playbackRate) + stretchInputRemainderSamples;
+    const auto inputSamples = std::max(1, static_cast<int>(std::floor(exactInputSamples)));
+    stretchInputRemainderSamples = exactInputSamples - static_cast<double>(inputSamples);
+
+    ensureStretchBuffers(std::max(inputSamples, timeStretch.inputLatency()), bufferToFill.numSamples);
 
     if (timeStretchNeedsReset)
         resetTimeStretch(playbackRate);
@@ -338,7 +364,9 @@ void DeckPlaybackEngine::renderNextAudioBlock(const juce::AudioSourceChannelInfo
 
     if (globalSecondsPerBar > 0.0)
     {
-        currentGridBarPosition += (static_cast<double>(bufferToFill.numSamples) / outputSampleRate) / globalSecondsPerBar;
+        const auto renderedBars = (static_cast<double>(bufferToFill.numSamples) / outputSampleRate) / globalSecondsPerBar;
+        currentGridBarPosition = externalGridStartBar != nullptr ? std::max(0.0, *externalGridStartBar) + renderedBars
+                                                                 : currentGridBarPosition + renderedBars;
         currentPositionSeconds = gridBarToTrackSeconds(currentGridBarPosition, deckSecondsPerBar, firstBeatOffsetSeconds, launchOffsetBars);
     }
 }
@@ -349,11 +377,32 @@ void DeckPlaybackEngine::releaseResources()
     outputSampleRate = 0.0;
 }
 
-void DeckPlaybackEngine::resetTimeStretch(double)
+void DeckPlaybackEngine::resetTimeStretch(double playbackRate)
 {
     timeStretch.reset();
-    stretchInputPositionSeconds = gridBarToTrackSeconds(currentGridBarPosition, deckSecondsPerBar, firstBeatOffsetSeconds, launchOffsetBars);
+    const auto startSeconds = gridBarToTrackSeconds(currentGridBarPosition, deckSecondsPerBar, firstBeatOffsetSeconds, launchOffsetBars);
+    stretchInputPositionSeconds = startSeconds;
     stretchInputRemainderSamples = 0.0;
+
+    // Signalsmith needs input lookahead after a reset/seek. Priming it here keeps
+    // deck starts and explicit grid jumps tied to the requested musical position.
+    const auto preRollSamples = std::max(0, timeStretch.inputLatency());
+    if (preRollSamples > 0 && outputSampleRate > 0.0)
+    {
+        ensureStretchBuffers(std::max(preRollSamples, stretchInputBuffer.getNumSamples()),
+            std::max(1, stretchOutputBuffer.getNumSamples()));
+
+        for (auto inputSample = 0; inputSample < preRollSamples; ++inputSample)
+        {
+            const auto timeSeconds = startSeconds + (static_cast<double>(inputSample) / outputSampleRate);
+            stretchInputBuffer.setSample(0, inputSample, mixedSampleAt(stems, stemEnabled, 0, timeSeconds));
+            stretchInputBuffer.setSample(1, inputSample, mixedSampleAt(stems, stemEnabled, 1, timeSeconds));
+        }
+
+        timeStretch.seek(stretchInputChannels.data(), preRollSamples, playbackRate);
+        stretchInputPositionSeconds = startSeconds + (static_cast<double>(preRollSamples) / outputSampleRate);
+    }
+
     timeStretchNeedsReset = false;
 }
 

@@ -137,6 +137,8 @@ add_executable(MixdeskStemTests
     Tests/StemPreparationTests.cpp
     Source/Engine/StemPreparation.cpp
     Source/Engine/StemPreparation.h
+    Source/Engine/WorkspaceController.cpp
+    Source/Engine/WorkspaceController.h
     Source/Model/PhraseModel.cpp
     Source/Model/PhraseModel.h
 )

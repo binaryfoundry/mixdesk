@@ -37,6 +37,14 @@ juce::String deckLabel(model::DeckId deckId)
     return juce::String(text.data(), static_cast<int>(text.size()));
 }
 
+double secondsPerBarFor(double bpm, int beatsPerBar)
+{
+    if (bpm <= 0.0)
+        return 0.0;
+
+    return (60.0 / bpm) * static_cast<double>(std::max(1, beatsPerBar));
+}
+
 std::size_t deckSlot(model::DeckId deckId)
 {
     return model::deckIndex(deckId);
@@ -127,7 +135,14 @@ std::shared_ptr<TrackLoadResult> loadTrackForDeck(int requestId,
     }
 
     engine::BeatDetector beatDetector;
-    auto analysis = beatDetector.analyzeDrumStem(bundle->drumStemFile);
+    const auto canAnalyzePreparedDrums = preparedStemSet.succeeded && preparedStemSet.stems.drums.hasAudio();
+    auto beatAnalysisSource = canAnalyzePreparedDrums ? juce::String("aligned playback drums") : juce::String("drum source file");
+    auto analysis = canAnalyzePreparedDrums
+        ? beatDetector.analyzeBuffer(preparedStemSet.stems.drums.audio,
+            preparedStemSet.stems.drums.sampleRate,
+            {},
+            engine::preparedStemSetDurationSeconds(preparedStemSet.stems))
+        : beatDetector.analyzeDrumStem(bundle->drumStemFile);
     if (! analysis.succeeded)
     {
         if (bundle->metadataBpm > 0.0)
@@ -139,6 +154,7 @@ std::shared_ptr<TrackLoadResult> loadTrackForDeck(int requestId,
             analysis.beatGrid.durationSeconds = bundle->loadedTrack.durationSeconds;
             analysis.beatGrid.beatTimesSeconds = makeFallbackBeatTimes(analysis.beatGrid.durationSeconds, analysis.beatGrid.secondsPerBeat);
             analysis.succeeded = true;
+            beatAnalysisSource = "track metadata fallback";
         }
         else
         {
@@ -199,6 +215,14 @@ std::shared_ptr<TrackLoadResult> loadTrackForDeck(int requestId,
     result->phraseBlocks = phraseAnalyzer.analyze(result->beatGrid, result->stemWaveforms, 8);
     result->preparedStems = std::move(preparedStemSet.stems);
     result->message = preparedStemSet.message;
+    const auto beatGridSecondsPerBar = model::beatGridSecondsPerBar(result->beatGrid);
+    const auto audioLeadInBars = beatGridSecondsPerBar > 0.0
+        ? result->beatGrid.firstBeatOffsetSeconds / beatGridSecondsPerBar
+        : 0.0;
+    result->message += "\nBeat grid: " + juce::String(result->beatGrid.tempo, 4)
+        + " BPM exact, first beat offset " + juce::String(result->beatGrid.firstBeatOffsetSeconds * 1000.0, 2)
+        + " ms / " + juce::String(audioLeadInBars, 4)
+        + " bars from file start (" + beatAnalysisSource + ")";
     result->succeeded = true;
     return result;
 }
@@ -274,12 +298,7 @@ MainComponent::MainComponent()
     phraseWorkspace->onBpmChanged = [this](double bpm)
     {
         workspaceController.dispatch(engine::SetBpmCommand { bpm });
-
-        for (std::size_t slot = 0; slot < deckPlaybackEngines.size(); ++slot)
-        {
-            const auto beatsPerBar = deckBeatGrids[slot].has_value() ? deckBeatGrids[slot]->beatsPerBar : 4;
-            deckPlaybackEngines[slot].setGlobalBpm(bpm, beatsPerBar);
-        }
+        updateTransportTempoFromSnapshot();
 
         refreshWorkspaceSnapshot();
     };
@@ -290,6 +309,7 @@ MainComponent::MainComponent()
     };
 
     refreshWorkspaceSnapshot();
+    updateTransportTempoFromSnapshot();
 
     setAudioChannels(0, 2);
     startTimerHz(30);
@@ -308,6 +328,8 @@ void MainComponent::resized()
 
 void MainComponent::prepareToPlay(int samplesPerBlockExpected, double sampleRate)
 {
+    audioSampleRate.store(sampleRate);
+
     for (auto& playbackEngine : deckPlaybackEngines)
         playbackEngine.prepareToPlay(samplesPerBlockExpected, sampleRate);
 }
@@ -316,23 +338,37 @@ void MainComponent::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffer
 {
     bufferToFill.clearActiveBufferRegion();
 
+    // One global grid clock drives every deck. Each deck maps this shared musical
+    // position through its own beatgrid and launch offset before reading audio.
+    const auto blockStartBar = transportGridBarPosition.load();
+    const auto transportRunning = std::any_of(deckPlaybackEngines.begin(),
+        deckPlaybackEngines.end(),
+        [](const engine::DeckPlaybackEngine& playbackEngine) { return playbackEngine.isPlaying(); });
+
     for (auto& playbackEngine : deckPlaybackEngines)
-        playbackEngine.addNextAudioBlock(bufferToFill);
+        playbackEngine.addNextAudioBlockAtGrid(bufferToFill, blockStartBar);
+
+    const auto sampleRate = audioSampleRate.load();
+    const auto secondsPerBar = transportSecondsPerBar.load();
+    if (transportRunning && sampleRate > 0.0 && secondsPerBar > 0.0)
+    {
+        const auto renderedBars = (static_cast<double>(bufferToFill.numSamples) / sampleRate) / secondsPerBar;
+        transportGridBarPosition.store(blockStartBar + renderedBars);
+    }
 }
 
 void MainComponent::releaseResources()
 {
+    audioSampleRate.store(0.0);
+
     for (auto& playbackEngine : deckPlaybackEngines)
         playbackEngine.releaseResources();
 }
 
 void MainComponent::timerCallback()
 {
-    if (const auto gridBarPosition = firstPlayingGridBarPosition())
-        transportGridBarPosition = *gridBarPosition;
-
     updateDeckPlayingState();
-    workspaceController.dispatch(engine::SetCurrentBarPositionCommand { transportGridBarPosition });
+    workspaceController.dispatch(engine::SetCurrentBarPositionCommand { transportGridBarPosition.load() });
 
     refreshWorkspaceSnapshot();
 }
@@ -454,7 +490,7 @@ void MainComponent::applyLoadedTrackResult(std::shared_ptr<TrackLoadResult> resu
         }
 
         playbackEngine.setMasterVolume(workspaceController.createSnapshot().masterVolume);
-        playbackEngine.setCurrentGridBarPosition(transportGridBarPosition);
+        playbackEngine.setCurrentGridBarPosition(transportGridBarPosition.load());
     }
 
     workspaceController.dispatch(engine::SetDeckLaunchOffsetCommand { result->deckId, result->launchOffsetBars });
@@ -465,7 +501,8 @@ void MainComponent::applyLoadedTrackResult(std::shared_ptr<TrackLoadResult> resu
         std::move(result->stemWaveforms),
         std::move(result->phraseBlocks)
     });
-    workspaceController.dispatch(engine::SetCurrentBarPositionCommand { transportGridBarPosition });
+    updateTransportTempoFromSnapshot();
+    workspaceController.dispatch(engine::SetCurrentBarPositionCommand { transportGridBarPosition.load() });
     configureDeckGridPlayback(result->deckId);
     syncStemControlsToPlayback();
 
@@ -491,7 +528,7 @@ void MainComponent::togglePlayback()
     }
     else
     {
-        setTransportGridBarPosition(transportGridBarPosition);
+        setTransportGridBarPosition(transportGridBarPosition.load());
 
         for (auto& playbackEngine : deckPlaybackEngines)
             playbackEngine.start();
@@ -513,16 +550,30 @@ void MainComponent::configureDeckGridPlayback(model::DeckId deckId)
     playbackEngine.configureGridPlayback(secondsPerBar, beatGrid->firstBeatOffsetSeconds, deckLaunchOffsetBars[slot]);
 
     const auto snapshot = workspaceController.createSnapshot();
-    playbackEngine.setGlobalBpm(snapshot.bpm, beatGrid->beatsPerBar);
-    playbackEngine.setCurrentGridBarPosition(transportGridBarPosition);
+    playbackEngine.setGlobalBpm(snapshot.bpm, snapshot.beatsPerBar);
+    playbackEngine.setCurrentGridBarPosition(transportGridBarPosition.load());
 }
 
 void MainComponent::setTransportGridBarPosition(double gridBarPosition)
 {
-    transportGridBarPosition = std::max(0.0, gridBarPosition);
+    const auto clampedGridBarPosition = std::max(0.0, gridBarPosition);
+    transportGridBarPosition.store(clampedGridBarPosition);
 
     for (auto& playbackEngine : deckPlaybackEngines)
-        playbackEngine.setCurrentGridBarPosition(transportGridBarPosition);
+        playbackEngine.setCurrentGridBarPosition(clampedGridBarPosition);
+}
+
+void MainComponent::updateTransportTempoFromSnapshot()
+{
+    const auto snapshot = workspaceController.createSnapshot();
+    const auto secondsPerBar = secondsPerBarFor(snapshot.bpm, snapshot.beatsPerBar);
+    if (secondsPerBar > 0.0)
+        transportSecondsPerBar.store(secondsPerBar);
+
+    // The shared transport and every deck stretcher must agree on the global
+    // bar duration, including when loading a track changes the workspace BPM.
+    for (std::size_t slot = 0; slot < deckPlaybackEngines.size(); ++slot)
+        deckPlaybackEngines[slot].setGlobalBpm(snapshot.bpm, snapshot.beatsPerBar);
 }
 
 void MainComponent::updateDeckPlayingState()
@@ -558,18 +609,6 @@ engine::DeckPlaybackEngine& MainComponent::playbackEngineFor(model::DeckId deckI
 const engine::DeckPlaybackEngine& MainComponent::playbackEngineFor(model::DeckId deckId) const noexcept
 {
     return deckPlaybackEngines[deckSlot(deckId)];
-}
-
-std::optional<double> MainComponent::firstPlayingGridBarPosition() const
-{
-    for (const auto deckId : { model::DeckId::A, model::DeckId::B, model::DeckId::C })
-    {
-        const auto& playbackEngine = playbackEngineFor(deckId);
-        if (playbackEngine.isPlaying())
-            return playbackEngine.getCurrentGridBarPosition();
-    }
-
-    return std::nullopt;
 }
 
 void MainComponent::refreshWorkspaceSnapshot()

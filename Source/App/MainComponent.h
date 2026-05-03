@@ -38,11 +38,11 @@ private:
     void togglePlayback();
     void configureDeckGridPlayback(model::DeckId deckId);
     void setTransportGridBarPosition(double gridBarPosition);
+    void updateTransportTempoFromSnapshot();
     void updateDeckPlayingState();
     void syncStemControlsToPlayback();
     [[nodiscard]] engine::DeckPlaybackEngine& playbackEngineFor(model::DeckId deckId) noexcept;
     [[nodiscard]] const engine::DeckPlaybackEngine& playbackEngineFor(model::DeckId deckId) const noexcept;
-    [[nodiscard]] std::optional<double> firstPlayingGridBarPosition() const;
     void refreshWorkspaceSnapshot();
 
     AppSettings appSettings;
@@ -52,7 +52,9 @@ private:
     std::array<std::optional<model::BeatGrid>, 3> deckBeatGrids;
     std::array<int, 3> deckLaunchOffsetBars {};
     std::atomic<int> nextTrackLoadRequestId { 1 };
+    std::atomic<double> audioSampleRate {};
+    std::atomic<double> transportSecondsPerBar {};
+    std::atomic<double> transportGridBarPosition {};
     int activeTrackLoadRequestId {};
-    double transportGridBarPosition {};
 };
 } // namespace mixdesk::app

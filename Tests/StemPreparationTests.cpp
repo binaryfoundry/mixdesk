@@ -1,4 +1,5 @@
 #include "Engine/StemPreparation.h"
+#include "Engine/WorkspaceController.h"
 
 #include <cmath>
 #include <iostream>
@@ -294,6 +295,73 @@ bool testStemVolumesBalanceAcrossLoadedDecks()
         && expect(std::abs(deckCDrums - 1.0f) < tolerance, "raised deck owns full stem")
         && expect(std::abs(otherDrums) < tolerance, "other matching stems are ducked to zero");
 }
+
+mixdesk::engine::SetDeckLoadedTrackCommand makeLoadCommand(mixdesk::model::DeckId deckId, double tempo, int beatsPerBar)
+{
+    mixdesk::model::LoadedTrack track;
+    track.name = "test";
+
+    mixdesk::model::BeatGrid beatGrid;
+    beatGrid.tempo = tempo;
+    beatGrid.bpm = static_cast<int>(std::round(tempo));
+    beatGrid.secondsPerBeat = 60.0 / tempo;
+    beatGrid.beatsPerBar = beatsPerBar;
+
+    return { deckId, track, beatGrid, {}, {} };
+}
+
+bool testWorkspaceBpmOnlyAdoptsFirstLoadedTrack()
+{
+    mixdesk::model::WorkspaceState state;
+    state.bpm = 126.0;
+    state.beatsPerBar = 4;
+    state.decks.resize(3);
+    state.decks[0].id = mixdesk::model::DeckId::A;
+    state.decks[1].id = mixdesk::model::DeckId::B;
+    state.decks[2].id = mixdesk::model::DeckId::C;
+
+    mixdesk::engine::WorkspaceController controller(state);
+    controller.dispatch(mixdesk::engine::WorkspaceCommand { makeLoadCommand(mixdesk::model::DeckId::A, 124.25, 4) });
+    auto snapshot = controller.createSnapshot();
+    const auto firstLoadAdoptedTempo = std::abs(snapshot.bpm - 124.25) < 0.0001 && snapshot.beatsPerBar == 4;
+
+    controller.dispatch(mixdesk::engine::WorkspaceCommand { makeLoadCommand(mixdesk::model::DeckId::B, 130.0, 3) });
+    snapshot = controller.createSnapshot();
+
+    return expect(firstLoadAdoptedTempo, "first loaded track sets workspace tempo")
+        && expect(std::abs(snapshot.bpm - 124.25) < 0.0001, "later track load does not change workspace BPM")
+        && expect(snapshot.beatsPerBar == 4, "later track load does not change workspace bar definition")
+        && expect(snapshot.decks[1].beatGrid.has_value() && std::abs(snapshot.decks[1].beatGrid->tempo - 130.0) < 0.0001,
+            "later deck still keeps its own beatgrid");
+}
+
+bool testBeatGridMapsAudioStartBeforeFirstBeat()
+{
+    mixdesk::model::BeatGrid beatGrid;
+    beatGrid.tempo = 120.0;
+    beatGrid.bpm = 120;
+    beatGrid.secondsPerBeat = 0.5;
+    beatGrid.beatsPerBar = 4;
+    beatGrid.firstBeatOffsetSeconds = 0.25;
+    beatGrid.durationSeconds = 10.0;
+
+    constexpr auto launchOffsetBars = 16;
+    constexpr auto expectedAudioStartBar = 15.875;
+
+    const auto audioStartBar = mixdesk::model::trackAudioStartBar(beatGrid, launchOffsetBars);
+    const auto firstBeatTime = mixdesk::model::gridBarToTrackTime(beatGrid, launchOffsetBars, launchOffsetBars);
+    const auto audioStartTime = mixdesk::model::gridBarToTrackTime(beatGrid, launchOffsetBars, audioStartBar);
+    const auto durationBars = mixdesk::model::trackDurationBars(beatGrid);
+
+    return expect(std::abs(audioStartBar - expectedAudioStartBar) < 0.0001,
+            "audio bed starts before musical launch when track has lead-in")
+        && expect(std::abs(firstBeatTime - beatGrid.firstBeatOffsetSeconds) < 0.0001,
+            "launch offset still maps to first beat")
+        && expect(std::abs(audioStartTime) < 0.0001,
+            "audio start bar maps back to file time zero")
+        && expect(std::abs(durationBars - 5.0) < 0.0001,
+            "duration in bars uses the track beatgrid");
+}
 } // namespace
 
 int main()
@@ -306,6 +374,8 @@ int main()
     failures += testPlaybackDoesNotUseComplementStemsAsPublicMix() ? 0 : 1;
     failures += testFullMixPreferredWhenAllPublicStemsEnabled() ? 0 : 1;
     failures += testStemVolumesBalanceAcrossLoadedDecks() ? 0 : 1;
+    failures += testWorkspaceBpmOnlyAdoptsFirstLoadedTrack() ? 0 : 1;
+    failures += testBeatGridMapsAudioStartBeforeFirstBeat() ? 0 : 1;
 
     if (failures == 0)
     {

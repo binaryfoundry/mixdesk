@@ -64,16 +64,25 @@ void WorkspaceController::apply(const SetDeckLoadedTrackCommand& command)
     if (deck == nullptr)
         return;
 
+    const auto shouldAdoptTrackTempo = std::none_of(state.decks.begin(),
+        state.decks.end(),
+        [](const auto& existingDeck) { return existingDeck.loadedTrack.has_value(); });
+
     deck->loadedTrack = command.track;
     deck->beatGrid = command.beatGrid;
     deck->stemWaveforms = command.stemWaveforms;
     deck->blocks = command.phraseBlocks;
     model::balanceStemVolumesForLoadedDeck(state, command.deckId);
 
-    if (command.beatGrid.bpm > 0)
-        state.bpm = static_cast<double>(command.beatGrid.bpm);
+    if (shouldAdoptTrackTempo)
+    {
+        if (command.beatGrid.tempo > 0.0)
+            state.bpm = command.beatGrid.tempo;
+        else if (command.beatGrid.bpm > 0)
+            state.bpm = static_cast<double>(command.beatGrid.bpm);
 
-    state.beatsPerBar = std::max(1, command.beatGrid.beatsPerBar);
+        state.beatsPerBar = std::max(1, command.beatGrid.beatsPerBar);
+    }
 }
 
 void WorkspaceController::apply(const SetDeckPlayingCommand& command)

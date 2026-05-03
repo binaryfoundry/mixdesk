@@ -241,6 +241,58 @@ BeatDetector::BeatDetector()
     formatManager.registerBasicFormats();
 }
 
+BeatDetectionResult BeatDetector::analyzeBuffer(const juce::AudioBuffer<float>& audio,
+    double sampleRate,
+    TempoSettings tempoSettings,
+    double durationSeconds)
+{
+    if (sampleRate <= 0.0 || audio.getNumSamples() <= 0 || audio.getNumChannels() <= 0)
+        return { false, {}, "Audio buffer has no readable samples for beat detection." };
+
+    const auto sampleCount = audio.getNumSamples();
+    std::vector<float> channelData(static_cast<std::size_t>(sampleCount));
+    BiquadLowPass lowPass(sampleRate, lowPassFrequencyHz);
+    const auto channelCount = audio.getNumChannels();
+
+    for (auto i = 0; i < sampleCount; ++i)
+    {
+        auto mono = 0.0f;
+        for (auto channel = 0; channel < channelCount; ++channel)
+            mono += audio.getSample(channel, i);
+
+        channelData[static_cast<std::size_t>(i)] = lowPass.process(mono / static_cast<float>(channelCount));
+    }
+
+    auto tempoBuckets = computeTempoBuckets(channelData, sampleRate, tempoSettings);
+    if (tempoBuckets.empty())
+        return { false, {}, "No detectable beats found in prepared drum audio." };
+
+    const auto& bestBucket = tempoBuckets.front();
+    const auto tempo = std::max(1.0, bestBucket.tempo);
+    const auto bpm = std::max(1, static_cast<int>(std::round(tempo)));
+    const auto secondsPerBeat = 60.0 / tempo;
+    auto peaks = bestBucket.peaks;
+    std::sort(peaks.begin(), peaks.end());
+
+    auto offsetSeconds = peaks.empty() ? 0.0 : static_cast<double>(peaks.front()) / sampleRate;
+    while (offsetSeconds > secondsPerBeat)
+        offsetSeconds -= secondsPerBeat;
+
+    if (durationSeconds <= 0.0)
+        durationSeconds = static_cast<double>(sampleCount) / sampleRate;
+
+    model::BeatGrid beatGrid;
+    beatGrid.tempo = tempo;
+    beatGrid.bpm = bpm;
+    beatGrid.firstBeatOffsetSeconds = offsetSeconds;
+    beatGrid.secondsPerBeat = secondsPerBeat;
+    beatGrid.beatsPerBar = defaultBeatsPerBar;
+    beatGrid.durationSeconds = durationSeconds;
+    beatGrid.beatTimesSeconds = makeBeatTimes(offsetSeconds, secondsPerBeat, durationSeconds);
+
+    return { true, std::move(beatGrid), {} };
+}
+
 BeatDetectionResult BeatDetector::analyzeDrumStem(const juce::File& drumStemFile, TempoSettings tempoSettings)
 {
     if (! drumStemFile.existsAsFile())
@@ -262,38 +314,11 @@ BeatDetectionResult BeatDetector::analyzeDrumStem(const juce::File& drumStemFile
     if (! reader->read(&buffer, 0, sampleCount, 0, true, false))
         return { false, {}, "Failed to decode drum stem: " + drumStemFile.getFullPathName() };
 
-    std::vector<float> channelData(static_cast<std::size_t>(sampleCount));
-    BiquadLowPass lowPass(reader->sampleRate, lowPassFrequencyHz);
-    const auto* samples = buffer.getReadPointer(0);
-
-    for (auto i = 0; i < sampleCount; ++i)
-        channelData[static_cast<std::size_t>(i)] = lowPass.process(samples[i]);
-
-    auto tempoBuckets = computeTempoBuckets(channelData, reader->sampleRate, tempoSettings);
-    if (tempoBuckets.empty())
-        return { false, {}, "No detectable beats found in drum stem: " + drumStemFile.getFileName() };
-
-    const auto& bestBucket = tempoBuckets.front();
-    const auto bpm = std::max(1, static_cast<int>(std::round(bestBucket.tempo)));
-    const auto secondsPerBeat = 60.0 / static_cast<double>(bpm);
-    auto peaks = bestBucket.peaks;
-    std::sort(peaks.begin(), peaks.end());
-
-    auto offsetSeconds = peaks.empty() ? 0.0 : static_cast<double>(peaks.front()) / reader->sampleRate;
-    while (offsetSeconds > secondsPerBeat)
-        offsetSeconds -= secondsPerBeat;
-
     const auto durationSeconds = static_cast<double>(reader->lengthInSamples) / reader->sampleRate;
+    auto result = analyzeBuffer(buffer, reader->sampleRate, tempoSettings, durationSeconds);
+    if (! result.succeeded)
+        result.message = "No detectable beats found in drum stem: " + drumStemFile.getFileName();
 
-    model::BeatGrid beatGrid;
-    beatGrid.tempo = bestBucket.tempo;
-    beatGrid.bpm = bpm;
-    beatGrid.firstBeatOffsetSeconds = offsetSeconds;
-    beatGrid.secondsPerBeat = secondsPerBeat;
-    beatGrid.beatsPerBar = defaultBeatsPerBar;
-    beatGrid.durationSeconds = durationSeconds;
-    beatGrid.beatTimesSeconds = makeBeatTimes(offsetSeconds, secondsPerBeat, durationSeconds);
-
-    return { true, std::move(beatGrid), {} };
+    return result;
 }
 } // namespace mixdesk::engine

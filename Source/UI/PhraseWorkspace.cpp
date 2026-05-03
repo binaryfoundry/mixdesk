@@ -644,7 +644,7 @@ juce::Rectangle<float> PhraseWorkspace::getLoadedTrackBounds(std::size_t deckInd
         return {};
 
     const auto lane = getLaneBounds(deckIndex).reduced(4.0f, 14.0f);
-    const auto x = xForBar(static_cast<double>(deck.launchOffsetBars));
+    const auto x = xForBar(getTrackStartBar(deck));
     const auto width = static_cast<float>(getTrackLengthBars(deck)) * pixelsPerBar;
 
     return { x, lane.getY(), width, lane.getHeight() };
@@ -675,23 +675,26 @@ double PhraseWorkspace::barForX(float x) const
     return viewStartBar + (static_cast<double>(x - grid.getX()) / static_cast<double>(pixelsPerBar));
 }
 
-double PhraseWorkspace::beatTimeToBar(const model::DeckTimeline& deck, double beatTimeSeconds) const
+double PhraseWorkspace::trackTimeToBar(const model::DeckTimeline& deck, double trackTimeSeconds) const
 {
-    if (! deck.beatGrid.has_value() || deck.beatGrid->secondsPerBeat <= 0.0)
+    if (! deck.beatGrid.has_value())
         return static_cast<double>(deck.launchOffsetBars);
 
-    const auto beatsPerBar = std::max(1, deck.beatGrid->beatsPerBar);
-    const auto beatPosition = (beatTimeSeconds - deck.beatGrid->firstBeatOffsetSeconds) / deck.beatGrid->secondsPerBeat;
-    return static_cast<double>(deck.launchOffsetBars) + (beatPosition / static_cast<double>(beatsPerBar));
+    return model::trackTimeToGridBar(*deck.beatGrid, deck.launchOffsetBars, trackTimeSeconds);
+}
+
+double PhraseWorkspace::getTrackStartBar(const model::DeckTimeline& deck) const
+{
+    if (! deck.beatGrid.has_value())
+        return static_cast<double>(deck.launchOffsetBars);
+
+    return model::trackAudioStartBar(*deck.beatGrid, deck.launchOffsetBars);
 }
 
 double PhraseWorkspace::getTrackLengthBars(const model::DeckTimeline& deck) const
 {
-    if (deck.beatGrid.has_value() && deck.beatGrid->secondsPerBeat > 0.0)
-    {
-        const auto secondsPerBar = deck.beatGrid->secondsPerBeat * static_cast<double>(std::max(1, deck.beatGrid->beatsPerBar));
-        return deck.beatGrid->durationSeconds / secondsPerBar;
-    }
+    if (deck.beatGrid.has_value())
+        return model::trackDurationBars(*deck.beatGrid);
 
     return 64.0;
 }
@@ -1076,11 +1079,8 @@ void PhraseWorkspace::drawStemWaveforms(juce::Graphics& g, const model::DeckTime
 
         if (beatGrid != nullptr && beatGrid->secondsPerBeat > 0.0)
         {
-            const auto secondsPerBar = beatGrid->secondsPerBeat * static_cast<double>(std::max(1, beatGrid->beatsPerBar));
-            firstVisibleSecond = ((visibleStart - static_cast<double>(deck.launchOffsetBars)) * secondsPerBar)
-                + beatGrid->firstBeatOffsetSeconds;
-            lastVisibleSecond = ((visibleEnd - static_cast<double>(deck.launchOffsetBars)) * secondsPerBar)
-                + beatGrid->firstBeatOffsetSeconds;
+            firstVisibleSecond = model::gridBarToTrackTime(*beatGrid, deck.launchOffsetBars, visibleStart);
+            lastVisibleSecond = model::gridBarToTrackTime(*beatGrid, deck.launchOffsetBars, visibleEnd);
         }
 
         firstVisibleSecond = std::clamp(firstVisibleSecond, 0.0, duration);
@@ -1106,7 +1106,7 @@ void PhraseWorkspace::drawStemWaveforms(juce::Graphics& g, const model::DeckTime
         for (auto index = startIndex; index <= endIndex; ++index)
         {
             const auto timeSeconds = static_cast<double>(index) / waveform.pointsPerSecond;
-            const auto markerBar = beatGrid != nullptr ? beatTimeToBar(deck, timeSeconds)
+            const auto markerBar = beatGrid != nullptr ? trackTimeToBar(deck, timeSeconds)
                 : static_cast<double>(deck.launchOffsetBars) + ((timeSeconds / duration) * 64.0);
             const auto x = xForBar(markerBar);
             const auto peak = std::sqrt(std::clamp(waveform.peaks[index], 0.0f, 1.0f));
@@ -1126,7 +1126,7 @@ void PhraseWorkspace::drawStemWaveforms(juce::Graphics& g, const model::DeckTime
         for (auto reverseIndex = endIndex + 1; reverseIndex-- > startIndex;)
         {
             const auto timeSeconds = static_cast<double>(reverseIndex) / waveform.pointsPerSecond;
-            const auto markerBar = beatGrid != nullptr ? beatTimeToBar(deck, timeSeconds)
+            const auto markerBar = beatGrid != nullptr ? trackTimeToBar(deck, timeSeconds)
                 : static_cast<double>(deck.launchOffsetBars) + ((timeSeconds / duration) * 64.0);
             const auto x = xForBar(markerBar);
             const auto peak = std::sqrt(std::clamp(waveform.peaks[reverseIndex], 0.0f, 1.0f));
@@ -1167,7 +1167,7 @@ void PhraseWorkspace::drawBeatMarkers(juce::Graphics& g)
 
         for (std::size_t beatIndex = 0; beatIndex < deck.beatGrid->beatTimesSeconds.size(); ++beatIndex)
         {
-            const auto markerBar = beatTimeToBar(deck, deck.beatGrid->beatTimesSeconds[beatIndex]);
+            const auto markerBar = trackTimeToBar(deck, deck.beatGrid->beatTimesSeconds[beatIndex]);
 
             if (markerBar < viewStartBar || markerBar > visibleEndBar())
                 continue;

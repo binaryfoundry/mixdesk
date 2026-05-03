@@ -423,6 +423,45 @@ DeckRole nextRole(DeckRole role) noexcept
     return DeckRole::Lead;
 }
 
+double beatGridSecondsPerBar(const BeatGrid& beatGrid) noexcept
+{
+    if (beatGrid.secondsPerBeat <= 0.0)
+        return 0.0;
+
+    return beatGrid.secondsPerBeat * static_cast<double>(std::max(1, beatGrid.beatsPerBar));
+}
+
+double trackTimeToGridBar(const BeatGrid& beatGrid, int launchOffsetBars, double trackTimeSeconds) noexcept
+{
+    const auto secondsPerBar = beatGridSecondsPerBar(beatGrid);
+    if (secondsPerBar <= 0.0)
+        return static_cast<double>(launchOffsetBars);
+
+    return static_cast<double>(launchOffsetBars)
+        + ((trackTimeSeconds - beatGrid.firstBeatOffsetSeconds) / secondsPerBar);
+}
+
+double gridBarToTrackTime(const BeatGrid& beatGrid, int launchOffsetBars, double gridBar) noexcept
+{
+    const auto secondsPerBar = beatGridSecondsPerBar(beatGrid);
+    if (secondsPerBar <= 0.0)
+        return 0.0;
+
+    return beatGrid.firstBeatOffsetSeconds
+        + ((gridBar - static_cast<double>(launchOffsetBars)) * secondsPerBar);
+}
+
+double trackAudioStartBar(const BeatGrid& beatGrid, int launchOffsetBars) noexcept
+{
+    return trackTimeToGridBar(beatGrid, launchOffsetBars, 0.0);
+}
+
+double trackDurationBars(const BeatGrid& beatGrid) noexcept
+{
+    const auto secondsPerBar = beatGridSecondsPerBar(beatGrid);
+    return secondsPerBar > 0.0 ? beatGrid.durationSeconds / secondsPerBar : 0.0;
+}
+
 DeckTimeline* findDeck(WorkspaceState& state, DeckId deckId) noexcept
 {
     const auto iter = std::find_if(state.decks.begin(), state.decks.end(),

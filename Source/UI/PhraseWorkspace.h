@@ -153,7 +153,8 @@ private:
 
     float xForBar(double bar) const;
     double barForX(float x) const;
-    double beatTimeToBar(const model::DeckTimeline& deck, double beatTimeSeconds) const;
+    double trackTimeToBar(const model::DeckTimeline& deck, double trackTimeSeconds) const;
+    double getTrackStartBar(const model::DeckTimeline& deck) const;
     double getTrackLengthBars(const model::DeckTimeline& deck) const;
     double visibleEndBar() const;
 

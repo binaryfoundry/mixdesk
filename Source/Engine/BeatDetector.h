@@ -24,6 +24,11 @@ class BeatDetector
 public:
     BeatDetector();
 
+    [[nodiscard]] BeatDetectionResult analyzeBuffer(const juce::AudioBuffer<float>& audio,
+        double sampleRate,
+        TempoSettings tempoSettings = {},
+        double durationSeconds = 0.0);
+
     [[nodiscard]] BeatDetectionResult analyzeDrumStem(const juce::File& drumStemFile,
         TempoSettings tempoSettings = {});
 

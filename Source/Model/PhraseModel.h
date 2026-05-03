@@ -208,6 +208,12 @@ void setStemVolumeAcrossLoadedDecks(WorkspaceState& state, DeckId deckId, StemTy
 void balanceStemVolumesForLoadedDeck(WorkspaceState& state, DeckId loadedDeckId) noexcept;
 DeckRole nextRole(DeckRole role) noexcept;
 
+double beatGridSecondsPerBar(const BeatGrid& beatGrid) noexcept;
+double trackTimeToGridBar(const BeatGrid& beatGrid, int launchOffsetBars, double trackTimeSeconds) noexcept;
+double gridBarToTrackTime(const BeatGrid& beatGrid, int launchOffsetBars, double gridBar) noexcept;
+double trackAudioStartBar(const BeatGrid& beatGrid, int launchOffsetBars) noexcept;
+double trackDurationBars(const BeatGrid& beatGrid) noexcept;
+
 DeckTimeline* findDeck(WorkspaceState& state, DeckId deckId) noexcept;
 const DeckTimeline* findDeck(const WorkspaceState& state, DeckId deckId) noexcept;
 std::size_t deckIndex(DeckId deckId) noexcept;
