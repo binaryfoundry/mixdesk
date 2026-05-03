@@ -95,6 +95,10 @@ std::optional<TrackBundle> loadTrackBundleFromMixdeskJson(const juce::File& meta
     if (! drumStemFile.existsAsFile())
         return std::nullopt;
 
+    const auto instrumentalEntry = entriesObject->getProperty("instrumental");
+    auto* instrumentalObject = instrumentalEntry.getDynamicObject();
+    auto instrumentalStemFile = resolveSiblingFile(metadataFile, instrumentalObject == nullptr ? juce::var() : instrumentalObject->getProperty("file"));
+
     const auto bassEntry = entriesObject->getProperty("bass");
     auto* bassObject = bassEntry.getDynamicObject();
     const auto bassStemFile = resolveSiblingFile(metadataFile, bassObject == nullptr ? juce::var() : bassObject->getProperty("file"));
@@ -118,13 +122,15 @@ std::optional<TrackBundle> loadTrackBundleFromMixdeskJson(const juce::File& meta
     auto primaryAudioFile = pickPrimaryAudioFile(metadataFile.getParentDirectory(), knownStemFileNames);
     if (! primaryAudioFile.existsAsFile())
     {
-        const auto instrumentalEntry = entriesObject->getProperty("instrumental");
-        if (auto* instrumentalObject = instrumentalEntry.getDynamicObject())
-            primaryAudioFile = resolveSiblingFile(metadataFile, instrumentalObject->getProperty("file"));
+        if (instrumentalObject != nullptr)
+            primaryAudioFile = instrumentalStemFile;
     }
 
     if (! primaryAudioFile.existsAsFile())
         primaryAudioFile = drumStemFile;
+
+    if (! instrumentalStemFile.existsAsFile())
+        instrumentalStemFile = primaryAudioFile;
 
     const auto trackName = readStringProperty(root, "track_name");
     const auto duration = readDoubleProperty(root, "duration");
@@ -134,13 +140,14 @@ std::optional<TrackBundle> loadTrackBundleFromMixdeskJson(const juce::File& meta
     model::LoadedTrack loadedTrack;
     loadedTrack.name = trackName.isNotEmpty() ? trackName.toStdString() : metadataFile.getParentDirectory().getFileName().toStdString();
     loadedTrack.audioPath = primaryAudioFile.getFullPathName().toStdString();
+    loadedTrack.instrumentalStemPath = instrumentalStemFile.existsAsFile() ? instrumentalStemFile.getFullPathName().toStdString() : std::string();
     loadedTrack.drumStemPath = drumStemFile.getFullPathName().toStdString();
     loadedTrack.bassStemPath = bassStemFile.existsAsFile() ? bassStemFile.getFullPathName().toStdString() : std::string();
     loadedTrack.vocalStemPath = vocalStemFile.existsAsFile() ? vocalStemFile.getFullPathName().toStdString() : std::string();
     loadedTrack.key = drumKey.toStdString();
     loadedTrack.durationSeconds = duration;
 
-    return TrackBundle { loadedTrack, metadataFile, primaryAudioFile, drumStemFile, bassStemFile, vocalStemFile, metadataBpm };
+    return TrackBundle { loadedTrack, metadataFile, primaryAudioFile, instrumentalStemFile, drumStemFile, bassStemFile, vocalStemFile, metadataBpm };
 }
 
 std::optional<juce::File> findFirstMixdeskJson(const juce::File& rootDirectory)

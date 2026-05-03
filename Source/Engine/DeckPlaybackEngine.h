@@ -2,8 +2,6 @@
 
 #include <juce_audio_utils/juce_audio_utils.h>
 
-#include <memory>
-
 namespace mixdesk::engine
 {
 class DeckPlaybackEngine final : public juce::AudioSource
@@ -13,12 +11,19 @@ public:
     ~DeckPlaybackEngine() override;
 
     [[nodiscard]] bool loadFile(const juce::File& file);
+    [[nodiscard]] bool loadStemSet(const juce::File& instrumentalFile,
+        const juce::File& drumStemFile,
+        const juce::File& bassStemFile,
+        const juce::File& vocalStemFile);
     void start();
     void stop();
     void togglePlayback();
+    void configureGridPlayback(double secondsPerBar, double firstBeatOffsetSeconds, int launchOffsetBars);
+    void setLaunchOffsetBars(int launchOffsetBars);
 
     [[nodiscard]] bool isPlaying() const;
     [[nodiscard]] double getCurrentPositionSeconds() const;
+    [[nodiscard]] double getCurrentGridBarPosition() const;
     [[nodiscard]] double getLengthSeconds() const;
     [[nodiscard]] juce::File getLoadedFile() const;
 
@@ -26,11 +31,28 @@ public:
     void getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferToFill) override;
     void releaseResources() override;
 
+    struct PlaybackBuffer
+    {
+        juce::AudioBuffer<float> audio;
+        double sampleRate {};
+    };
+
 private:
     mutable juce::CriticalSection lock;
     juce::AudioFormatManager formatManager;
-    juce::AudioTransportSource transportSource;
-    std::unique_ptr<juce::AudioFormatReaderSource> readerSource;
+    PlaybackBuffer residualInstrumental;
+    PlaybackBuffer drums;
+    PlaybackBuffer bass;
+    PlaybackBuffer vocal;
     juce::File loadedFile;
+    double outputSampleRate {};
+    double currentPositionSeconds {};
+    double currentGridBarPosition {};
+    double secondsPerBar {};
+    double firstBeatOffsetSeconds {};
+    double lengthSeconds {};
+    int launchOffsetBars {};
+    bool playing {};
+    bool loaded {};
 };
 } // namespace mixdesk::engine

@@ -157,18 +157,12 @@ PhraseWorkspace::PhraseWorkspace()
         setSnapMode(snapMode == SnapMode::Bar ? SnapMode::Phrase : SnapMode::Bar);
     };
     roleButton.onClick = [this] { cycleSelectedRole(); };
-    playDeckAButton.onClick = [this]
-    {
-        if (onDeckPlayToggleRequested)
-            onDeckPlayToggleRequested(model::DeckId::A);
-    };
 
     launch8Button.setTooltip("Move the selected deck launch by 8 bars");
     launch16Button.setTooltip("Move the selected deck launch by 16 bars");
     launch32Button.setTooltip("Move the selected deck launch by 32 bars");
     snapButton.setTooltip("Toggle bar or phrase snapping for block drags");
     roleButton.setTooltip("Cycle the selected deck role");
-    playDeckAButton.setTooltip("Start or pause Deck A playback");
 
     updateButtonText();
 }
@@ -201,6 +195,19 @@ void PhraseWorkspace::mouseDown(const juce::MouseEvent& event)
 {
     const auto sourceIndex = event.source.getIndex();
     activePointers.insert_or_assign(sourceIndex, PointerContact { event.position, event.position, event.source.isTouch() });
+
+    if (getTransportButtonBounds().contains(event.position))
+    {
+        selectedBlockIndex.reset();
+        activeDrag.reset();
+        activeTrackDrag.reset();
+
+        if (onPlaybackToggleRequested)
+            onPlaybackToggleRequested();
+
+        repaint();
+        return;
+    }
 
     if (const auto hit = hitTestBlock(event.position))
     {
@@ -346,6 +353,13 @@ juce::Rectangle<float> PhraseWorkspace::getHeaderBounds() const
     return getLocalBounds().removeFromTop(headerHeight).toFloat();
 }
 
+juce::Rectangle<float> PhraseWorkspace::getTransportButtonBounds() const
+{
+    const auto header = getHeaderBounds();
+    const auto size = 42.0f;
+    return { header.getX() + outerPadding, header.getCentreY() - (size * 0.5f), size, size };
+}
+
 juce::Rectangle<float> PhraseWorkspace::getTimelineBounds() const
 {
     auto bounds = getLocalBounds().toFloat();
@@ -364,6 +378,15 @@ juce::Rectangle<float> PhraseWorkspace::getGridBounds() const
 juce::Rectangle<float> PhraseWorkspace::getControlBounds() const
 {
     return getLocalBounds().removeFromBottom(controlHeight).toFloat();
+}
+
+juce::Rectangle<float> PhraseWorkspace::getDeckLabelBounds(std::size_t deckIndex) const
+{
+    auto timeline = getTimelineBounds();
+    auto labelArea = timeline.removeFromLeft(leftLabelWidth);
+    const auto lane = getLaneBounds(deckIndex);
+
+    return { labelArea.getX(), lane.getY(), labelArea.getWidth() - 10.0f, lane.getHeight() };
 }
 
 juce::Rectangle<float> PhraseWorkspace::getLaneBounds(std::size_t deckIndex) const
@@ -481,6 +504,32 @@ void PhraseWorkspace::drawHeader(juce::Graphics& g)
     const auto barsUntilBoundary = static_cast<double>(barsPerPhrase) - barIntoPhrase;
 
     auto content = header.reduced(outerPadding, 0.0f);
+    const auto transportButton = getTransportButtonBounds();
+    const auto isPlaying = isWorkspacePlaying();
+
+    g.setColour(isPlaying ? juce::Colour(0xffd6eef5) : juce::Colour(0xff24313a));
+    g.fillRoundedRectangle(transportButton, 8.0f);
+    g.setColour(isPlaying ? juce::Colour(0xff101318) : textColour());
+
+    if (isPlaying)
+    {
+        const auto pauseBarWidth = 5.0f;
+        const auto pauseHeight = transportButton.getHeight() * 0.44f;
+        const auto pauseY = transportButton.getCentreY() - (pauseHeight * 0.5f);
+        g.fillRect(juce::Rectangle<float>(transportButton.getCentreX() - 7.0f, pauseY, pauseBarWidth, pauseHeight));
+        g.fillRect(juce::Rectangle<float>(transportButton.getCentreX() + 2.0f, pauseY, pauseBarWidth, pauseHeight));
+    }
+    else
+    {
+        juce::Path playIcon;
+        playIcon.startNewSubPath(transportButton.getCentreX() - 5.0f, transportButton.getCentreY() - 9.0f);
+        playIcon.lineTo(transportButton.getCentreX() - 5.0f, transportButton.getCentreY() + 9.0f);
+        playIcon.lineTo(transportButton.getCentreX() + 10.0f, transportButton.getCentreY());
+        playIcon.closeSubPath();
+        g.fillPath(playIcon);
+    }
+
+    content.removeFromLeft(transportButton.getWidth() + 14.0f);
     auto titleArea = content.removeFromLeft(330.0f);
 
     g.setColour(textColour());
@@ -546,15 +595,13 @@ void PhraseWorkspace::drawGrid(juce::Graphics& g)
 
 void PhraseWorkspace::drawLanes(juce::Graphics& g)
 {
-    auto timeline = getTimelineBounds();
-    auto labelArea = timeline.removeFromLeft(leftLabelWidth);
-
     for (std::size_t deckIndex = 0; deckIndex < state.decks.size(); ++deckIndex)
     {
         const auto& deck = state.decks[deckIndex];
         const auto lane = getLaneBounds(deckIndex);
         const auto isSelected = deck.id == selectedDeck;
-        const auto laneLabel = juce::Rectangle<float>(labelArea.getX(), lane.getY(), labelArea.getWidth() - 10.0f, lane.getHeight());
+        const auto laneLabel = getDeckLabelBounds(deckIndex);
+        const auto hasTrack = deck.loadedTrack.has_value();
 
         g.setColour(isSelected ? laneSelectedColour() : laneColour());
         g.fillRoundedRectangle(lane, 8.0f);
@@ -591,7 +638,6 @@ void PhraseWorkspace::drawLanes(juce::Graphics& g)
         g.drawFittedText(launchText, roleArea.toNearestInt(), juce::Justification::centredLeft, 1);
 
         textBounds.removeFromTop(10.0f);
-        const auto hasTrack = deck.loadedTrack.has_value();
         const auto title = hasTrack ? asJuceString(deck.loadedTrack->name) : juce::String("Empty deck");
         g.setColour(hasTrack ? textColour() : mutedTextColour().withAlpha(0.58f));
         g.setFont(makeFont(hasTrack ? 16.0f : 14.0f, hasTrack ? juce::Font::bold : juce::Font::plain));
@@ -1070,12 +1116,6 @@ void PhraseWorkspace::cycleSelectedRole()
 void PhraseWorkspace::updateButtonText()
 {
     snapButton.setButtonText(snapMode == SnapMode::Bar ? "Snap: Bar" : "Snap: Phrase");
-
-    if (const auto* deckA = model::findDeck(state, model::DeckId::A);
-        deckA != nullptr && deckA->isPlaying)
-        playDeckAButton.setButtonText("Pause A");
-    else
-        playDeckAButton.setButtonText("Play A");
 }
 
 PhraseWorkspace::ConflictFlags PhraseWorkspace::detectConflictForBlock(std::size_t deckIndex, std::size_t blockIndex) const
@@ -1110,6 +1150,12 @@ PhraseWorkspace::ConflictFlags PhraseWorkspace::detectConflictForBlock(std::size
     }
 
     return conflictFlags;
+}
+
+bool PhraseWorkspace::isWorkspacePlaying() const
+{
+    return std::any_of(state.decks.begin(), state.decks.end(),
+        [](const model::DeckTimeline& deck) { return deck.isPlaying; });
 }
 
 void PhraseWorkspace::zoomAround(float componentX, float scaleFactor)

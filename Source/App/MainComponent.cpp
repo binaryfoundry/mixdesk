@@ -43,7 +43,10 @@ MainComponent::MainComponent()
     phraseWorkspace->onLaunchOffsetNudged = [this](model::DeckId deckId, int deltaBars)
     {
         if (deckId == model::DeckId::A)
+        {
             deckOneLaunchOffsetBars += deltaBars;
+            deckPlaybackEngine.setLaunchOffsetBars(deckOneLaunchOffsetBars);
+        }
 
         workspaceController.dispatch(engine::NudgeLaunchOffsetCommand { deckId, deltaBars });
         refreshWorkspaceSnapshot();
@@ -52,7 +55,10 @@ MainComponent::MainComponent()
     phraseWorkspace->onTrackLaunchOffsetMoved = [this](model::DeckId deckId, int launchOffsetBars)
     {
         if (deckId == model::DeckId::A)
+        {
             deckOneLaunchOffsetBars = launchOffsetBars;
+            deckPlaybackEngine.setLaunchOffsetBars(deckOneLaunchOffsetBars);
+        }
 
         workspaceController.dispatch(engine::SetDeckLaunchOffsetCommand { deckId, launchOffsetBars });
         refreshWorkspaceSnapshot();
@@ -64,10 +70,9 @@ MainComponent::MainComponent()
         refreshWorkspaceSnapshot();
     };
 
-    phraseWorkspace->onDeckPlayToggleRequested = [this](model::DeckId deckId)
+    phraseWorkspace->onPlaybackToggleRequested = [this]
     {
-        if (deckId == model::DeckId::A)
-            toggleDeckOnePlayback();
+        togglePlayback();
     };
 
     loadDeckOneFromTracksFolder();
@@ -106,13 +111,10 @@ void MainComponent::releaseResources()
 void MainComponent::timerCallback()
 {
     const auto isPlaying = deckPlaybackEngine.isPlaying();
-    workspaceController.dispatch(engine::SetDeckPlayingCommand { model::DeckId::A, isPlaying });
+    for (const auto deckId : { model::DeckId::A, model::DeckId::B, model::DeckId::C })
+        workspaceController.dispatch(engine::SetDeckPlayingCommand { deckId, isPlaying });
 
-    if (deckOneBeatGrid.has_value())
-    {
-        const auto barPosition = secondsToDeckBarPosition(deckPlaybackEngine.getCurrentPositionSeconds());
-        workspaceController.dispatch(engine::SetCurrentBarPositionCommand { barPosition });
-    }
+    workspaceController.dispatch(engine::SetCurrentBarPositionCommand { deckPlaybackEngine.getCurrentGridBarPosition() });
 
     refreshWorkspaceSnapshot();
 }
@@ -127,7 +129,8 @@ void MainComponent::loadDeckOneFromTracksFolder()
     if (! bundle.has_value())
         return;
 
-    if (! deckPlaybackEngine.loadFile(bundle->primaryAudioFile))
+    if (! deckPlaybackEngine.loadStemSet(bundle->instrumentalStemFile, bundle->drumStemFile, bundle->bassStemFile, bundle->vocalStemFile)
+        && ! deckPlaybackEngine.loadFile(bundle->primaryAudioFile))
         return;
 
     auto analysis = beatDetector.analyzeDrumStem(bundle->drumStemFile);
@@ -155,6 +158,7 @@ void MainComponent::loadDeckOneFromTracksFolder()
 
     analysis.beatGrid.durationSeconds = track.durationSeconds > 0.0 ? track.durationSeconds : analysis.beatGrid.durationSeconds;
     deckOneBeatGrid = analysis.beatGrid;
+    configureDeckOneGridPlayback();
 
     // TODO(waveform rendering): move this load-time analysis onto a background job once track loading is interactive.
     std::vector<model::StemWaveform> stemWaveforms;
@@ -176,24 +180,25 @@ void MainComponent::loadDeckOneFromTracksFolder()
         std::move(stemWaveforms),
         std::move(phraseBlocks)
     });
-    workspaceController.dispatch(engine::SetCurrentBarPositionCommand { secondsToDeckBarPosition(0.0) });
+    workspaceController.dispatch(engine::SetCurrentBarPositionCommand { deckPlaybackEngine.getCurrentGridBarPosition() });
 }
 
-void MainComponent::toggleDeckOnePlayback()
+void MainComponent::togglePlayback()
 {
     deckPlaybackEngine.togglePlayback();
-    workspaceController.dispatch(engine::SetDeckPlayingCommand { model::DeckId::A, deckPlaybackEngine.isPlaying() });
+    const auto isPlaying = deckPlaybackEngine.isPlaying();
+    for (const auto deckId : { model::DeckId::A, model::DeckId::B, model::DeckId::C })
+        workspaceController.dispatch(engine::SetDeckPlayingCommand { deckId, isPlaying });
     refreshWorkspaceSnapshot();
 }
 
-double MainComponent::secondsToDeckBarPosition(double seconds) const
+void MainComponent::configureDeckOneGridPlayback()
 {
-    if (! deckOneBeatGrid.has_value() || deckOneBeatGrid->secondsPerBeat <= 0.0)
-        return 0.0;
+    if (! deckOneBeatGrid.has_value())
+        return;
 
-    const auto beatsPerBar = std::max(1, deckOneBeatGrid->beatsPerBar);
-    const auto beatPosition = (seconds - deckOneBeatGrid->firstBeatOffsetSeconds) / deckOneBeatGrid->secondsPerBeat;
-    return beatPosition / static_cast<double>(beatsPerBar);
+    const auto secondsPerBar = deckOneBeatGrid->secondsPerBeat * static_cast<double>(std::max(1, deckOneBeatGrid->beatsPerBar));
+    deckPlaybackEngine.configureGridPlayback(secondsPerBar, deckOneBeatGrid->firstBeatOffsetSeconds, deckOneLaunchOffsetBars);
 }
 
 void MainComponent::refreshWorkspaceSnapshot()

@@ -79,6 +79,7 @@ struct LoadedTrack
 {
     std::string name;
     std::string audioPath;
+    std::string instrumentalStemPath;
     std::string drumStemPath;
     std::string bassStemPath;
     std::string vocalStemPath;

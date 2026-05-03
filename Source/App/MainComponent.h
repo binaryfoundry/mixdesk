@@ -30,8 +30,8 @@ public:
 private:
     void timerCallback() override;
     void loadDeckOneFromTracksFolder();
-    void toggleDeckOnePlayback();
-    [[nodiscard]] double secondsToDeckBarPosition(double seconds) const;
+    void togglePlayback();
+    void configureDeckOneGridPlayback();
     void refreshWorkspaceSnapshot();
 
     engine::WorkspaceController workspaceController;

@@ -17,7 +17,7 @@ public:
     using LaunchNudgeCallback = std::function<void(model::DeckId, int)>;
     using TrackMoveCallback = std::function<void(model::DeckId, int)>;
     using RoleChangeCallback = std::function<void(model::DeckId, model::DeckRole)>;
-    using DeckPlayToggleCallback = std::function<void(model::DeckId)>;
+    using PlaybackToggleCallback = std::function<void()>;
 
     PhraseWorkspace();
 
@@ -36,7 +36,7 @@ public:
     LaunchNudgeCallback onLaunchOffsetNudged;
     TrackMoveCallback onTrackLaunchOffsetMoved;
     RoleChangeCallback onRoleChangeRequested;
-    DeckPlayToggleCallback onDeckPlayToggleRequested;
+    PlaybackToggleCallback onPlaybackToggleRequested;
 
 private:
     enum class SnapMode
@@ -93,9 +93,11 @@ private:
     };
 
     juce::Rectangle<float> getHeaderBounds() const;
+    juce::Rectangle<float> getTransportButtonBounds() const;
     juce::Rectangle<float> getTimelineBounds() const;
     juce::Rectangle<float> getGridBounds() const;
     juce::Rectangle<float> getControlBounds() const;
+    juce::Rectangle<float> getDeckLabelBounds(std::size_t deckIndex) const;
     juce::Rectangle<float> getLaneBounds(std::size_t deckIndex) const;
     juce::Rectangle<float> getBlockBounds(std::size_t deckIndex, std::size_t blockIndex) const;
     juce::Rectangle<float> getLoadedTrackBounds(std::size_t deckIndex) const;
@@ -130,6 +132,7 @@ private:
     void updateButtonText();
 
     ConflictFlags detectConflictForBlock(std::size_t deckIndex, std::size_t blockIndex) const;
+    bool isWorkspacePlaying() const;
     void zoomAround(float componentX, float scaleFactor);
     void updatePinchZoomFromPointers();
 
@@ -149,7 +152,6 @@ private:
     juce::TextButton launch32Button { "Launch +32" };
     juce::TextButton snapButton { "Snap: Bar" };
     juce::TextButton roleButton { "Role" };
-    juce::TextButton playDeckAButton { "Play A" };
 
     static constexpr float minPixelsPerBar = 12.0f;
     static constexpr float maxPixelsPerBar = 72.0f;

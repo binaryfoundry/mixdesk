@@ -13,6 +13,7 @@ struct TrackBundle
     model::LoadedTrack loadedTrack;
     juce::File metadataFile;
     juce::File primaryAudioFile;
+    juce::File instrumentalStemFile;
     juce::File drumStemFile;
     juce::File bassStemFile;
     juce::File vocalStemFile;
