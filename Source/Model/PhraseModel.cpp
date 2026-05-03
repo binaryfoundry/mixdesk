@@ -312,38 +312,65 @@ void setStemVolumeAcrossLoadedDecks(WorkspaceState& state, DeckId deckId, StemTy
         return;
     }
 
-    const auto count = loadedDeckCount(state);
-    if (count <= 1)
-    {
-        setStemVolume(changedDeck->stemEnabled, stemType, volume);
-        return;
-    }
-
-    const auto previousChangedVolume = stemVolume(changedDeck->stemEnabled, stemType);
     const auto changedVolume = std::clamp(volume, 0.0f, 1.0f);
-    setStemVolume(changedDeck->stemEnabled, stemType, changedVolume);
-
-    if (changedVolume <= previousChangedVolume)
-        return;
-
     auto otherTotal = 0.0f;
+    auto otherCount = std::size_t {};
+
     for (const auto& deck : state.decks)
     {
         if (deck.id == deckId || ! loadedDeckParticipates(deck))
             continue;
 
         otherTotal += stemVolume(deck.stemEnabled, stemType);
+        ++otherCount;
     }
 
-    const auto currentTotal = changedVolume + otherTotal;
-    if (currentTotal <= 1.0f || otherTotal <= 0.0001f)
+    if (otherCount == 0)
+    {
+        setStemVolume(changedDeck->stemEnabled, stemType, 1.0f);
         return;
+    }
+
+    setStemVolume(changedDeck->stemEnabled, stemType, changedVolume);
 
     const auto targetOtherTotal = std::max(0.0f, 1.0f - changedVolume);
-    const auto otherScale = targetOtherTotal / otherTotal;
+    if (otherTotal <= 0.0001f)
+    {
+        const auto equalOtherVolume = targetOtherTotal / static_cast<float>(otherCount);
+        for (auto& deck : state.decks)
+            if (deck.id != deckId && loadedDeckParticipates(deck))
+                setStemVolume(deck.stemEnabled, stemType, equalOtherVolume);
+    }
+    else
+    {
+        const auto otherScale = targetOtherTotal / otherTotal;
+        for (auto& deck : state.decks)
+            if (deck.id != deckId && loadedDeckParticipates(deck))
+                setStemVolume(deck.stemEnabled, stemType, stemVolume(deck.stemEnabled, stemType) * otherScale);
+    }
+}
+
+void assignStemToLoadedDeck(WorkspaceState& state, DeckId deckId, StemType stemType) noexcept
+{
+    if (! isPublicPlayableStem(stemType))
+        return;
+
+    auto* selectedDeck = findDeck(state, deckId);
+    if (selectedDeck == nullptr || ! loadedDeckParticipates(*selectedDeck))
+        return;
+
     for (auto& deck : state.decks)
-        if (deck.id != deckId && loadedDeckParticipates(deck))
-            setStemVolume(deck.stemEnabled, stemType, stemVolume(deck.stemEnabled, stemType) * otherScale);
+    {
+        const auto selected = deck.id == deckId;
+        setStemEnabled(deck.stemEnabled, stemType, selected);
+        setStemVolume(deck.stemEnabled, stemType, selected ? 1.0f : 0.0f);
+    }
+}
+
+void assignAllPublicStemsToLoadedDeck(WorkspaceState& state, DeckId deckId) noexcept
+{
+    for (const auto stemType : publicVolumeStemTypes)
+        assignStemToLoadedDeck(state, deckId, stemType);
 }
 
 void balanceStemVolumesForLoadedDeck(WorkspaceState& state, DeckId loadedDeckId) noexcept

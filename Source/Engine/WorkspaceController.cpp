@@ -74,6 +74,9 @@ void WorkspaceController::apply(const SetDeckLoadedTrackCommand& command)
     deck->blocks = command.phraseBlocks;
 
     if (shouldAdoptTrackTempo)
+        model::assignAllPublicStemsToLoadedDeck(state, command.deckId);
+
+    if (shouldAdoptTrackTempo)
     {
         if (command.beatGrid.tempo > 0.0)
             state.bpm = command.beatGrid.tempo;
@@ -98,6 +101,12 @@ void WorkspaceController::apply(const SetDeckStemEnabledCommand& command)
     auto* deck = model::findDeck(state, command.deckId);
     if (deck == nullptr)
         return;
+
+    if (command.stemType == model::StemType::Vocals && command.enabled)
+    {
+        model::assignStemToLoadedDeck(state, command.deckId, command.stemType);
+        return;
+    }
 
     model::setStemEnabled(deck->stemEnabled, command.stemType, command.enabled);
 }

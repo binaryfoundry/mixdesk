@@ -205,6 +205,8 @@ bool areAllPublicStemsEnabled(const StemEnableState& stemState) noexcept;
 bool areAllPublicStemVolumesUnity(const StemEnableState& stemState) noexcept;
 void normalizeStemVolumesAcrossLoadedDecks(WorkspaceState& state, StemType stemType) noexcept;
 void setStemVolumeAcrossLoadedDecks(WorkspaceState& state, DeckId deckId, StemType stemType, float volume) noexcept;
+void assignStemToLoadedDeck(WorkspaceState& state, DeckId deckId, StemType stemType) noexcept;
+void assignAllPublicStemsToLoadedDeck(WorkspaceState& state, DeckId deckId) noexcept;
 void balanceStemVolumesForLoadedDeck(WorkspaceState& state, DeckId loadedDeckId) noexcept;
 DeckRole nextRole(DeckRole role) noexcept;
 
