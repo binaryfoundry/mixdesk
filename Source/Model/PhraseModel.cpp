@@ -315,37 +315,31 @@ void setStemVolumeAcrossLoadedDecks(WorkspaceState& state, DeckId deckId, StemTy
     const auto count = loadedDeckCount(state);
     if (count <= 1)
     {
-        setStemVolume(changedDeck->stemEnabled, stemType, 1.0f);
+        setStemVolume(changedDeck->stemEnabled, stemType, volume);
         return;
     }
 
+    const auto previousChangedVolume = stemVolume(changedDeck->stemEnabled, stemType);
     const auto changedVolume = std::clamp(volume, 0.0f, 1.0f);
     setStemVolume(changedDeck->stemEnabled, stemType, changedVolume);
 
+    if (changedVolume <= previousChangedVolume)
+        return;
+
     auto otherTotal = 0.0f;
-    auto otherCount = std::size_t {};
     for (const auto& deck : state.decks)
     {
         if (deck.id == deckId || ! loadedDeckParticipates(deck))
             continue;
 
         otherTotal += stemVolume(deck.stemEnabled, stemType);
-        ++otherCount;
     }
 
-    const auto targetOtherTotal = 1.0f - changedVolume;
-    if (otherCount == 0)
+    const auto currentTotal = changedVolume + otherTotal;
+    if (currentTotal <= 1.0f || otherTotal <= 0.0001f)
         return;
 
-    if (otherTotal <= 0.0001f)
-    {
-        const auto equalOtherVolume = targetOtherTotal / static_cast<float>(otherCount);
-        for (auto& deck : state.decks)
-            if (deck.id != deckId && loadedDeckParticipates(deck))
-                setStemVolume(deck.stemEnabled, stemType, equalOtherVolume);
-        return;
-    }
-
+    const auto targetOtherTotal = std::max(0.0f, 1.0f - changedVolume);
     const auto otherScale = targetOtherTotal / otherTotal;
     for (auto& deck : state.decks)
         if (deck.id != deckId && loadedDeckParticipates(deck))

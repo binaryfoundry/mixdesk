@@ -72,7 +72,6 @@ void WorkspaceController::apply(const SetDeckLoadedTrackCommand& command)
     deck->beatGrid = command.beatGrid;
     deck->stemWaveforms = command.stemWaveforms;
     deck->blocks = command.phraseBlocks;
-    model::balanceStemVolumesForLoadedDeck(state, command.deckId);
 
     if (shouldAdoptTrackTempo)
     {

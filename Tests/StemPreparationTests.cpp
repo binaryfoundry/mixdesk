@@ -296,6 +296,51 @@ bool testStemVolumesBalanceAcrossLoadedDecks()
         && expect(std::abs(otherDrums) < tolerance, "other matching stems are ducked to zero");
 }
 
+bool testStemVolumeLoweringDoesNotRaiseOtherDecks()
+{
+    mixdesk::model::WorkspaceState state;
+    state.decks.resize(3);
+    state.decks[0].id = mixdesk::model::DeckId::A;
+    state.decks[1].id = mixdesk::model::DeckId::B;
+    state.decks[2].id = mixdesk::model::DeckId::C;
+
+    for (auto& deck : state.decks)
+        deck.loadedTrack = mixdesk::model::LoadedTrack {};
+
+    mixdesk::model::setStemVolume(state.decks[0].stemEnabled, StemType::Drums, 0.4f);
+    mixdesk::model::setStemVolume(state.decks[1].stemEnabled, StemType::Drums, 0.4f);
+    mixdesk::model::setStemVolume(state.decks[2].stemEnabled, StemType::Drums, 0.2f);
+
+    mixdesk::model::setStemVolumeAcrossLoadedDecks(state, mixdesk::model::DeckId::A, StemType::Drums, 0.1f);
+    const auto lowerDeckA = mixdesk::model::stemVolume(state.decks[0].stemEnabled, StemType::Drums);
+    const auto unchangedDeckBAfterLower = mixdesk::model::stemVolume(state.decks[1].stemEnabled, StemType::Drums);
+    const auto unchangedDeckCAfterLower = mixdesk::model::stemVolume(state.decks[2].stemEnabled, StemType::Drums);
+    const auto lowerTotal = totalStemVolume(state, StemType::Drums);
+
+    mixdesk::model::setStemVolumeAcrossLoadedDecks(state, mixdesk::model::DeckId::A, StemType::Drums, 0.7f);
+    const auto raisedDeckA = mixdesk::model::stemVolume(state.decks[0].stemEnabled, StemType::Drums);
+    const auto duckedDeckB = mixdesk::model::stemVolume(state.decks[1].stemEnabled, StemType::Drums);
+    const auto duckedDeckC = mixdesk::model::stemVolume(state.decks[2].stemEnabled, StemType::Drums);
+    const auto raisedTotal = totalStemVolume(state, StemType::Drums);
+
+    mixdesk::model::WorkspaceState singleDeckState;
+    singleDeckState.decks.resize(1);
+    singleDeckState.decks[0].id = mixdesk::model::DeckId::A;
+    singleDeckState.decks[0].loadedTrack = mixdesk::model::LoadedTrack {};
+    mixdesk::model::setStemVolumeAcrossLoadedDecks(singleDeckState, mixdesk::model::DeckId::A, StemType::Drums, 0.3f);
+    const auto singleDeckLower = mixdesk::model::stemVolume(singleDeckState.decks[0].stemEnabled, StemType::Drums);
+
+    return expect(std::abs(lowerDeckA - 0.1f) < tolerance, "lowering keeps requested deck volume")
+        && expect(std::abs(unchangedDeckBAfterLower - 0.4f) < tolerance, "lowering does not raise or alter deck B")
+        && expect(std::abs(unchangedDeckCAfterLower - 0.2f) < tolerance, "lowering does not raise or alter deck C")
+        && expect(std::abs(lowerTotal - 0.7f) < tolerance, "lowering can leave total below one")
+        && expect(std::abs(raisedDeckA - 0.7f) < tolerance, "raising keeps requested deck volume")
+        && expect(std::abs(duckedDeckB - 0.2f) < tolerance, "raising ducks deck B proportionally")
+        && expect(std::abs(duckedDeckC - 0.1f) < tolerance, "raising ducks deck C proportionally")
+        && expect(std::abs(raisedTotal - 1.0f) < tolerance, "raising caps total at one")
+        && expect(std::abs(singleDeckLower - 0.3f) < tolerance, "single loaded deck can be lowered");
+}
+
 mixdesk::engine::SetDeckLoadedTrackCommand makeLoadCommand(mixdesk::model::DeckId deckId, double tempo, int beatsPerBar)
 {
     mixdesk::model::LoadedTrack track;
@@ -333,6 +378,49 @@ bool testWorkspaceBpmOnlyAdoptsFirstLoadedTrack()
         && expect(snapshot.beatsPerBar == 4, "later track load does not change workspace bar definition")
         && expect(snapshot.decks[1].beatGrid.has_value() && std::abs(snapshot.decks[1].beatGrid->tempo - 130.0) < 0.0001,
             "later deck still keeps its own beatgrid");
+}
+
+bool testLoadingTrackDoesNotChangeStemVolumes()
+{
+    mixdesk::model::WorkspaceState state;
+    state.decks.resize(3);
+    state.decks[0].id = mixdesk::model::DeckId::A;
+    state.decks[1].id = mixdesk::model::DeckId::B;
+    state.decks[2].id = mixdesk::model::DeckId::C;
+
+    mixdesk::model::setStemVolume(state.decks[0].stemEnabled, StemType::Drums, 0.72f);
+    mixdesk::model::setStemVolume(state.decks[0].stemEnabled, StemType::Bass, 0.35f);
+    mixdesk::model::setStemVolume(state.decks[1].stemEnabled, StemType::Drums, 0.18f);
+    mixdesk::model::setStemVolume(state.decks[1].stemEnabled, StemType::Bass, 0.64f);
+    mixdesk::model::setStemVolume(state.decks[2].stemEnabled, StemType::Drums, 0.10f);
+    mixdesk::model::setStemVolume(state.decks[2].stemEnabled, StemType::Bass, 0.01f);
+
+    const auto beforeA = state.decks[0].stemEnabled;
+    const auto beforeB = state.decks[1].stemEnabled;
+    const auto beforeC = state.decks[2].stemEnabled;
+
+    mixdesk::engine::WorkspaceController controller(state);
+    controller.dispatch(mixdesk::engine::WorkspaceCommand { makeLoadCommand(mixdesk::model::DeckId::B, 124.0, 4) });
+    const auto snapshot = controller.createSnapshot();
+
+    return expect(std::abs(mixdesk::model::stemVolume(snapshot.decks[0].stemEnabled, StemType::Drums)
+                      - mixdesk::model::stemVolume(beforeA, StemType::Drums)) < tolerance,
+            "loading preserves deck A drum volume")
+        && expect(std::abs(mixdesk::model::stemVolume(snapshot.decks[0].stemEnabled, StemType::Bass)
+                      - mixdesk::model::stemVolume(beforeA, StemType::Bass)) < tolerance,
+            "loading preserves deck A bass volume")
+        && expect(std::abs(mixdesk::model::stemVolume(snapshot.decks[1].stemEnabled, StemType::Drums)
+                      - mixdesk::model::stemVolume(beforeB, StemType::Drums)) < tolerance,
+            "loading preserves loaded deck drum volume")
+        && expect(std::abs(mixdesk::model::stemVolume(snapshot.decks[1].stemEnabled, StemType::Bass)
+                      - mixdesk::model::stemVolume(beforeB, StemType::Bass)) < tolerance,
+            "loading preserves loaded deck bass volume")
+        && expect(std::abs(mixdesk::model::stemVolume(snapshot.decks[2].stemEnabled, StemType::Drums)
+                      - mixdesk::model::stemVolume(beforeC, StemType::Drums)) < tolerance,
+            "loading preserves deck C drum volume")
+        && expect(std::abs(mixdesk::model::stemVolume(snapshot.decks[2].stemEnabled, StemType::Bass)
+                      - mixdesk::model::stemVolume(beforeC, StemType::Bass)) < tolerance,
+            "loading preserves deck C bass volume");
 }
 
 bool testBeatGridMapsAudioStartBeforeFirstBeat()
@@ -374,7 +462,9 @@ int main()
     failures += testPlaybackDoesNotUseComplementStemsAsPublicMix() ? 0 : 1;
     failures += testFullMixPreferredWhenAllPublicStemsEnabled() ? 0 : 1;
     failures += testStemVolumesBalanceAcrossLoadedDecks() ? 0 : 1;
+    failures += testStemVolumeLoweringDoesNotRaiseOtherDecks() ? 0 : 1;
     failures += testWorkspaceBpmOnlyAdoptsFirstLoadedTrack() ? 0 : 1;
+    failures += testLoadingTrackDoesNotChangeStemVolumes() ? 0 : 1;
     failures += testBeatGridMapsAudioStartBeforeFirstBeat() ? 0 : 1;
 
     if (failures == 0)
