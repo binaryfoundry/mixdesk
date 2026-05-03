@@ -63,6 +63,52 @@ std::string_view toString(StemType type) noexcept
     return "Stem";
 }
 
+std::string_view toString(SourceStemType type) noexcept
+{
+    switch (type)
+    {
+        case SourceStemType::FullMix: return "Full Mix";
+        case SourceStemType::BassDirect: return "Bass Direct";
+        case SourceStemType::DrumsDirect: return "Drums Direct";
+        case SourceStemType::NoBass: return "No Bass";
+        case SourceStemType::NoDrums: return "No Drums";
+        case SourceStemType::NoVocals: return "No Vocals";
+    }
+
+    return "Source Stem";
+}
+
+std::string_view toString(PlayableStemType type) noexcept
+{
+    switch (type)
+    {
+        case PlayableStemType::Drums: return "Drums";
+        case PlayableStemType::Bass: return "Bass";
+        case PlayableStemType::Vocals: return "Vocals";
+        case PlayableStemType::Music: return "Music";
+        case PlayableStemType::FullMix: return "Full Mix";
+    }
+
+    return "Playable Stem";
+}
+
+std::string_view toString(InternalStemType type) noexcept
+{
+    switch (type)
+    {
+        case InternalStemType::BassFromComplement: return "Bass From Complement";
+        case InternalStemType::DrumsFromComplement: return "Drums From Complement";
+        case InternalStemType::VocalsFromComplement: return "Vocals From Complement";
+        case InternalStemType::MusicResidual: return "Music Residual";
+        case InternalStemType::ReconciledBass: return "Reconciled Bass";
+        case InternalStemType::ReconciledDrums: return "Reconciled Drums";
+        case InternalStemType::ReconciledVocals: return "Reconciled Vocals";
+        case InternalStemType::ReconciledMusic: return "Reconciled Music";
+    }
+
+    return "Internal Stem";
+}
+
 std::string_view toString(StemDerivationMethod method) noexcept
 {
     switch (method)

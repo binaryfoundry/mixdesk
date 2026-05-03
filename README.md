@@ -5,12 +5,12 @@ This is a small JUCE/C++20 prototype for a touch-first 3-deck DJ phrase alignmen
 ## What It Demonstrates
 
 - A custom `PhraseWorkspace` JUCE component with a horizontal phrase grid, deck lanes, phrase blocks, role labels, playhead, status row, and large touch-friendly controls.
-- A clean Deck A loading view with Deck B and Deck C left empty for manual arrangement work.
+- Starts with empty deck lanes; double-tap a lane to choose a track and place it at that bar.
 - Bar/phrase snapping structure for dragging phrase blocks horizontally.
-- Deck A auto-loads the first `mixdesk.json` found under `D:\tracks`, currently `D:\tracks\street-tuff\mixdesk.json`.
+- Track selection scans the configured tracks root for `mixdesk.json` files, defaulting to `D:\tracks`.
 - The drum stem is low-pass filtered and analyzed for a beat grid, then beat markers are drawn on the Deck A lane.
 - Drum, bass, music, and vocal stems are decoded once at load time into compact peak waveforms and rendered in layered colours.
-- Stem preprocessing derives a first-class `MusicResidual` buffer so playback exposes Drums, Bass, Music, and Vocals without double-counting the supplied instrumental stem.
+- Stem preprocessing reconciles direct LALALAI stems with `no_bass`, `no_drum`, and `no_vocals` complements so playback exposes clean Drums, Bass, Music, and Vocals.
 - The top bar provides one global play/pause control, a master volume slider, and a global BPM slider.
 - BPM changes drive the shared grid playhead while Signalsmith Stretch keeps playback pitch locked.
 - Per-deck D/B/M/V stem buttons toggle drum, bass, music, and vocal layers using the same colours as the waveform layers.
@@ -43,29 +43,64 @@ On Windows/MSVC, `MIXDESK_STATIC_RUNTIME` is enabled by default to avoid dependi
 - `Source/UI/PhraseWorkspace.*`: custom JUCE component, rendering, hit testing, drag snapping, zoom scaffolding, and conflict display.
 - `Source/Engine/TrackLoader.*`: reads `mixdesk.json`, finds the primary track and drum stem.
 - `Source/Engine/BeatDetector.*`: C++ translation of the `web-audio-beat-detector` worker algorithm: 240 Hz low-pass render, threshold peak detection, nearby peak interval counting, and tempo bucket scoring.
-- `Source/Engine/StemPreparation.*`: offline stem preparation, `MusicResidual` derivation, reconstruction validation metrics, and public stem mix helpers.
+- `Source/Engine/StemPreparation.*`: offline stem decoding, alignment, complement-stem reconciliation, `MusicResidual` derivation, reconstruction validation metrics, and public stem mix helpers.
 - `Source/Engine/WaveformAnalyzer.*`: builds downsampled stem peak envelopes for timeline rendering.
 - `Source/Engine/DeckPlaybackEngine.*`: minimal single-deck playback source for Deck A, including prepared-stem playback, global grid transport, master volume, and Signalsmith Stretch pitch-locked BPM changes.
 - `Source/Engine/WorkspaceController.*`: temporary UI-thread command receiver and state snapshot source. This is where a command queue/state snapshot handoff should replace direct mutation later.
 - `Source/App`: JUCE application shell and main component wiring.
 
-## Stem Reconstruction Design
+## Track Loading
 
-The supplied `instrumental` stem already contains drums and bass, so it must not be exposed as a normal playable layer alongside Drums and Bass. Mixdesk prepares a DJ-facing layout of Drums, Bass, Music, and Vocals, where the internal `MusicResidual` buffer backs the user-facing Music stem.
+Mixdesk no longer starts with a track loaded. Double-tap the musical timeline area of a deck lane to open the track selector. The selected track is loaded at the tapped bar position.
 
-Preferred derivation:
-
-```text
-MusicResidual = FullMix - Drums - Bass - Vocals
-```
-
-Fallback when a real FullMix is unavailable:
+The track root is stored in:
 
 ```text
-MusicResidual = InstrumentalOriginal - Drums - Bass
+%APPDATA%\Mixdesk\mixdesk.ini
 ```
 
-Residual generation is an import/preprocessing/background-cache job, not an audio callback job. It uses raw, non-normalized floating-point buffers and requires sample-aligned sources with matching sample rate, channel count, and sample count. Display waveform normalization is separate and does not touch the raw sample data used for subtraction.
+Default contents:
+
+```ini
+tracksRoot=D:\tracks
+```
+
+Track loading, stem preparation, waveform analysis, beat detection, and phrase analysis run on a background thread. The UI thread receives only the prepared result, so opening a track picker or loading a new deck should not block the interface or do heavy work in the audio callback.
+
+## Stem Reconciliation Design
+
+LALALAI complement files such as `no_bass`, `no_drum`, and `no_vocals` are full-mix-minus-one-part sources. They are useful analysis material, but they are not DJ-facing stems and must not be played alongside Drums and Bass as a normal performance set.
+
+Mixdesk now prepares four public stems:
+
+```text
+Drums
+Bass
+Vocals
+Music
+```
+
+Direct isolated stems are reconciled with complement-derived candidates:
+
+```text
+BassFromComplement   = FullMix - NoBass
+DrumsFromComplement  = FullMix - NoDrums
+VocalsFromComplement = FullMix - NoVocals
+```
+
+The first version chooses between direct and complement-derived bass/drum candidates using reconstruction error, while vocals use `VocalsFromComplement` when available. The internal Music stem is then:
+
+```text
+MusicResidual = FullMix - ReconciledDrums - ReconciledBass - ReconciledVocals
+```
+
+Fallback when a real FullMix is unavailable remains:
+
+```text
+MusicResidual = InstrumentalOriginal/NoVocals - Drums - Bass
+```
+
+Stem math is an import/preprocessing/background-cache job, not an audio callback job. MP3 is decoded once to floating-point PCM before subtraction because MP3 files can include encoder delay, padding, and lossy artifacts. Sources must share sample rate and channel count, and the preprocessing pass performs a conservative cross-correlation alignment check before subtraction. Display waveform normalization is separate and does not touch the raw sample data used for stem math.
 
 Playback uses FullMix when all four public stems are enabled and a real FullMix is available, because that is the highest-quality path. As soon as any individual stem changes, playback reconstructs from:
 
@@ -73,7 +108,7 @@ Playback uses FullMix when all four public stems are enabled and a real FullMix 
 enabled(Drums) + enabled(Bass) + enabled(MusicResidual) + enabled(Vocals)
 ```
 
-`InstrumentalOriginal` remains stored for derivation/debugging but is not mixed with Drums or Bass in the normal playback path.
+`NoBass`, `NoDrums`, `NoVocals`, direct candidates, and complement-derived candidates remain source/debug material. Normal playback never mixes `Bass + Drums + NoVocals`, never mixes `Bass + Drums + NoBass`, and never plays direct and complement versions of the same stem together. The debug report logs source availability, chosen candidates, signal metrics, reconstruction error, and warnings for suspiciously high error.
 
 ## Tests
 
@@ -81,7 +116,7 @@ enabled(Drums) + enabled(Bass) + enabled(MusicResidual) + enabled(Vocals)
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-`MixdeskStemTests` covers full-mix derivation, instrumental fallback derivation, the no-double-count playback rule, and clear failures for mismatched source formats.
+`MixdeskStemTests` covers complement candidate derivation, alignment offset detection, mismatched source rejection, no-complement-stem playback rules, and FullMix preference when all public stems are enabled.
 
 ## Next Steps
 
@@ -91,3 +126,4 @@ ctest --test-dir build -C Release --output-on-failure
 - TODO(MIDI/HID controller support): map external controls to launch, role, and snap actions.
 - TODO(multi-touch pinch zoom): complete two-finger zoom/pan handling against target hardware.
 - TODO(GPU rendering path): move dense timeline rendering to an accelerated path when visual density increases.
+- TODO(stem quality): add confidence-weighted candidate blending, frequency-dependent reconciliation, transient-aware drum selection, bass low-frequency preservation, vocal artifact detection, and spectral quality metrics.

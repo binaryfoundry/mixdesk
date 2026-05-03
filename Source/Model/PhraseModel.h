@@ -47,6 +47,37 @@ enum class StemType
     MusicResidual
 };
 
+enum class SourceStemType
+{
+    FullMix,
+    BassDirect,
+    DrumsDirect,
+    NoBass,
+    NoDrums,
+    NoVocals
+};
+
+enum class PlayableStemType
+{
+    Drums,
+    Bass,
+    Vocals,
+    Music,
+    FullMix
+};
+
+enum class InternalStemType
+{
+    BassFromComplement,
+    DrumsFromComplement,
+    VocalsFromComplement,
+    MusicResidual,
+    ReconciledBass,
+    ReconciledDrums,
+    ReconciledVocals,
+    ReconciledMusic
+};
+
 enum class StemDerivationMethod
 {
     FromFullMixMinusDrumsBassVocals,
@@ -70,8 +101,12 @@ struct StemSet
     std::optional<std::string> vocalsPath;
     std::optional<std::string> instrumentalOriginalPath;
     std::optional<std::string> musicResidualPath;
+    std::optional<std::string> noBassPath;
+    std::optional<std::string> noDrumsPath;
+    std::optional<std::string> noVocalsPath;
     StemDerivationMethod musicResidualDerivation { StemDerivationMethod::Unavailable };
     std::string musicResidualDerivationDetails;
+    std::string reconciliationDebugReport;
 };
 
 struct PhraseBlock
@@ -115,6 +150,9 @@ struct LoadedTrack
     std::string bassStemPath;
     std::string vocalStemPath;
     std::string musicResidualStemPath;
+    std::string noBassStemPath;
+    std::string noDrumStemPath;
+    std::string noVocalsStemPath;
     StemSet stems;
     std::string key;
     double durationSeconds { 0.0 };
@@ -149,6 +187,9 @@ std::string_view toString(DeckId deckId) noexcept;
 std::string_view toString(DeckRole role) noexcept;
 std::string_view toString(PhraseType type) noexcept;
 std::string_view toString(StemType type) noexcept;
+std::string_view toString(SourceStemType type) noexcept;
+std::string_view toString(PlayableStemType type) noexcept;
+std::string_view toString(InternalStemType type) noexcept;
 std::string_view toString(StemDerivationMethod method) noexcept;
 
 bool isStemEnabled(const StemEnableState& stemState, StemType stemType) noexcept;

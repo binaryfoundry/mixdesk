@@ -1,6 +1,8 @@
 #include "TrackLoader.h"
 
 #include <array>
+#include <algorithm>
+#include <cmath>
 #include <set>
 
 namespace mixdesk::engine
@@ -41,6 +43,27 @@ juce::File resolveSiblingFile(const juce::File& metadataFile, const juce::var& f
     return fileName.isEmpty() ? juce::File() : metadataFile.getSiblingFile(fileName);
 }
 
+juce::File resolveEntryFile(const juce::File& metadataFile,
+    const juce::DynamicObject* entriesObject,
+    std::initializer_list<const char*> entryNames)
+{
+    if (entriesObject == nullptr)
+        return {};
+
+    for (const auto* entryName : entryNames)
+    {
+        const auto entry = entriesObject->getProperty(entryName);
+        if (auto* entryObject = entry.getDynamicObject())
+        {
+            const auto file = resolveSiblingFile(metadataFile, entryObject->getProperty("file"));
+            if (file.existsAsFile())
+                return file;
+        }
+    }
+
+    return {};
+}
+
 juce::String readStringProperty(const juce::DynamicObject* object, const juce::Identifier& propertyName)
 {
     if (object == nullptr)
@@ -72,6 +95,40 @@ juce::File pickPrimaryAudioFile(const juce::File& directory, const std::set<juce
 
     return {};
 }
+
+juce::String formatDuration(double durationSeconds)
+{
+    if (durationSeconds <= 0.0)
+        return {};
+
+    const auto totalSeconds = static_cast<int>(std::round(durationSeconds));
+    const auto minutes = totalSeconds / 60;
+    const auto seconds = totalSeconds % 60;
+    return juce::String(minutes) + ":" + juce::String(seconds).paddedLeft('0', 2);
+}
+
+juce::String makeDisplayName(const TrackBundle& bundle)
+{
+    juce::String displayName = bundle.loadedTrack.name;
+
+    if (displayName.isEmpty())
+        displayName = bundle.metadataFile.getParentDirectory().getFileName();
+
+    juce::StringArray details;
+    if (bundle.loadedTrack.key.empty() == false)
+        details.add(bundle.loadedTrack.key);
+    if (bundle.metadataBpm > 0.0)
+        details.add(juce::String(static_cast<int>(std::round(bundle.metadataBpm))) + " BPM");
+
+    const auto duration = formatDuration(bundle.loadedTrack.durationSeconds);
+    if (duration.isNotEmpty())
+        details.add(duration);
+
+    if (! details.isEmpty())
+        displayName += "  (" + details.joinIntoString(" | ") + ")";
+
+    return displayName;
+}
 } // namespace
 
 std::optional<TrackBundle> loadTrackBundleFromMixdeskJson(const juce::File& metadataFile)
@@ -97,7 +154,8 @@ std::optional<TrackBundle> loadTrackBundleFromMixdeskJson(const juce::File& meta
 
     const auto instrumentalEntry = entriesObject->getProperty("instrumental");
     auto* instrumentalObject = instrumentalEntry.getDynamicObject();
-    auto instrumentalStemFile = resolveSiblingFile(metadataFile, instrumentalObject == nullptr ? juce::var() : instrumentalObject->getProperty("file"));
+    auto instrumentalStemFile = resolveEntryFile(metadataFile, entriesObject, { "instrumental", "no_vocals" });
+    auto noVocalsStemFile = instrumentalStemFile;
 
     const auto bassEntry = entriesObject->getProperty("bass");
     auto* bassObject = bassEntry.getDynamicObject();
@@ -107,8 +165,13 @@ std::optional<TrackBundle> loadTrackBundleFromMixdeskJson(const juce::File& meta
     auto* vocalObject = vocalEntry.getDynamicObject();
     const auto vocalStemFile = resolveSiblingFile(metadataFile, vocalObject == nullptr ? juce::var() : vocalObject->getProperty("file"));
 
+    const auto noBassStemFile = resolveEntryFile(metadataFile, entriesObject, { "no_bass", "nobass" });
+    const auto noDrumStemFile = resolveEntryFile(metadataFile, entriesObject, { "no_drum", "no_drums", "nodrum", "nodrums" });
+    if (! noVocalsStemFile.existsAsFile())
+        noVocalsStemFile = resolveEntryFile(metadataFile, entriesObject, { "no_vocals", "no_vocal", "novocals", "novocal" });
+
     std::set<juce::String> knownStemFileNames;
-    for (const auto& stemName : { "drum", "instrumental", "vocals", "bass" })
+    for (const auto& stemName : { "drum", "instrumental", "vocals", "bass", "no_bass", "no_drum", "no_vocals" })
     {
         const auto stemEntry = entriesObject->getProperty(stemName);
         if (auto* stemObject = stemEntry.getDynamicObject())
@@ -145,15 +208,31 @@ std::optional<TrackBundle> loadTrackBundleFromMixdeskJson(const juce::File& meta
     loadedTrack.drumStemPath = drumStemFile.getFullPathName().toStdString();
     loadedTrack.bassStemPath = bassStemFile.existsAsFile() ? bassStemFile.getFullPathName().toStdString() : std::string();
     loadedTrack.vocalStemPath = vocalStemFile.existsAsFile() ? vocalStemFile.getFullPathName().toStdString() : std::string();
+    loadedTrack.noBassStemPath = noBassStemFile.existsAsFile() ? noBassStemFile.getFullPathName().toStdString() : std::string();
+    loadedTrack.noDrumStemPath = noDrumStemFile.existsAsFile() ? noDrumStemFile.getFullPathName().toStdString() : std::string();
+    loadedTrack.noVocalsStemPath = noVocalsStemFile.existsAsFile() ? noVocalsStemFile.getFullPathName().toStdString() : std::string();
     loadedTrack.stems.fullMixPath = primaryAudioFile.existsAsFile() ? std::optional<std::string>(primaryAudioFile.getFullPathName().toStdString()) : std::nullopt;
     loadedTrack.stems.instrumentalOriginalPath = instrumentalStemFile.existsAsFile() ? std::optional<std::string>(instrumentalStemFile.getFullPathName().toStdString()) : std::nullopt;
     loadedTrack.stems.drumsPath = drumStemFile.existsAsFile() ? std::optional<std::string>(drumStemFile.getFullPathName().toStdString()) : std::nullopt;
     loadedTrack.stems.bassPath = bassStemFile.existsAsFile() ? std::optional<std::string>(bassStemFile.getFullPathName().toStdString()) : std::nullopt;
     loadedTrack.stems.vocalsPath = vocalStemFile.existsAsFile() ? std::optional<std::string>(vocalStemFile.getFullPathName().toStdString()) : std::nullopt;
+    loadedTrack.stems.noBassPath = noBassStemFile.existsAsFile() ? std::optional<std::string>(noBassStemFile.getFullPathName().toStdString()) : std::nullopt;
+    loadedTrack.stems.noDrumsPath = noDrumStemFile.existsAsFile() ? std::optional<std::string>(noDrumStemFile.getFullPathName().toStdString()) : std::nullopt;
+    loadedTrack.stems.noVocalsPath = noVocalsStemFile.existsAsFile() ? std::optional<std::string>(noVocalsStemFile.getFullPathName().toStdString()) : std::nullopt;
     loadedTrack.key = drumKey.toStdString();
     loadedTrack.durationSeconds = duration;
 
-    return TrackBundle { loadedTrack, metadataFile, primaryAudioFile, instrumentalStemFile, drumStemFile, bassStemFile, vocalStemFile, metadataBpm };
+    return TrackBundle { loadedTrack,
+        metadataFile,
+        primaryAudioFile,
+        instrumentalStemFile,
+        drumStemFile,
+        bassStemFile,
+        vocalStemFile,
+        noBassStemFile,
+        noDrumStemFile,
+        noVocalsStemFile,
+        metadataBpm };
 }
 
 std::optional<juce::File> findFirstMixdeskJson(const juce::File& rootDirectory)
@@ -166,5 +245,39 @@ std::optional<juce::File> findFirstMixdeskJson(const juce::File& rootDirectory)
         return matches.getFirst();
 
     return std::nullopt;
+}
+
+std::vector<TrackCatalogEntry> findTrackCatalog(const juce::File& rootDirectory)
+{
+    std::vector<TrackCatalogEntry> catalog;
+    if (! rootDirectory.isDirectory())
+        return catalog;
+
+    const auto matches = rootDirectory.findChildFiles(juce::File::findFiles, true, "mixdesk.json");
+    catalog.reserve(static_cast<std::size_t>(matches.size()));
+
+    for (const auto& metadataFile : matches)
+    {
+        auto bundle = loadTrackBundleFromMixdeskJson(metadataFile);
+        if (! bundle.has_value())
+            continue;
+
+        catalog.push_back({
+            metadataFile,
+            makeDisplayName(*bundle),
+            juce::String(bundle->loadedTrack.name),
+            juce::String(bundle->loadedTrack.key),
+            bundle->metadataBpm,
+            bundle->loadedTrack.durationSeconds
+        });
+    }
+
+    std::sort(catalog.begin(), catalog.end(),
+        [](const TrackCatalogEntry& a, const TrackCatalogEntry& b)
+        {
+            return a.displayName.compareIgnoreCase(b.displayName) < 0;
+        });
+
+    return catalog;
 }
 } // namespace mixdesk::engine

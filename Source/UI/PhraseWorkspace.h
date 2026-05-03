@@ -21,10 +21,13 @@ public:
     using StemToggleCallback = std::function<void(model::DeckId, model::StemType, bool)>;
     using MasterVolumeCallback = std::function<void(float)>;
     using BpmChangeCallback = std::function<void(double)>;
+    using TrackLoadRequestCallback = std::function<void(model::DeckId, int)>;
 
     PhraseWorkspace();
 
     void setStateSnapshot(model::WorkspaceState newState);
+    void showPendingTrackLoadMarker(model::DeckId deckId, int launchOffsetBars);
+    void clearPendingTrackLoadMarker();
 
     void paint(juce::Graphics& g) override;
     void resized() override;
@@ -43,6 +46,7 @@ public:
     StemToggleCallback onStemToggleRequested;
     MasterVolumeCallback onMasterVolumeChanged;
     BpmChangeCallback onBpmChanged;
+    TrackLoadRequestCallback onTrackLoadRequested;
 
 private:
     enum class SnapMode
@@ -105,6 +109,12 @@ private:
         bool vocal {};
     };
 
+    struct PendingTrackLoadMarker
+    {
+        model::DeckId deckId { model::DeckId::A };
+        int launchOffsetBars {};
+    };
+
     juce::Rectangle<float> getHeaderBounds() const;
     juce::Rectangle<float> getTransportButtonBounds() const;
     juce::Rectangle<float> getBpmBounds() const;
@@ -136,6 +146,7 @@ private:
     void drawBeatMarkers(juce::Graphics& g);
     void drawPhraseMarkers(juce::Graphics& g);
     void drawPhraseBlocks(juce::Graphics& g);
+    void drawPendingTrackLoadMarker(juce::Graphics& g);
     void drawPlayhead(juce::Graphics& g);
     void drawControlRail(juce::Graphics& g);
 
@@ -143,6 +154,8 @@ private:
     std::optional<HitTrack> hitTestLoadedTrack(juce::Point<float> position) const;
     std::optional<HitStemToggle> hitTestStemToggle(juce::Point<float> position) const;
     std::optional<model::DeckId> hitTestDeck(juce::Point<float> position) const;
+    bool isOverLoadedTrack(juce::Point<float> position) const;
+    bool isEmptyTrackLoadTarget(juce::Point<float> position) const;
 
     int snapStartBar(double rawStartBar) const;
     void setSnapMode(SnapMode newMode);
@@ -164,6 +177,7 @@ private:
     std::optional<std::size_t> selectedBlockIndex;
     std::optional<ActiveDrag> activeDrag;
     std::optional<ActiveTrackDrag> activeTrackDrag;
+    std::optional<PendingTrackLoadMarker> pendingTrackLoadMarker;
     std::optional<int> activeBpmDragSource;
     std::optional<int> activeVolumeDragSource;
     std::unordered_map<int, PointerContact> activePointers;

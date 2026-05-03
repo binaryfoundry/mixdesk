@@ -16,12 +16,6 @@ WorkspaceState createDemoWorkspaceState()
     deckA.launchOffsetBars = 0;
     deckA.volume = 0.92f;
     deckA.lowCutEnabled = false;
-    deckA.blocks = {
-        { PhraseType::Groove,    0, 16, 0.72f, true,  false, true,  true  },
-        { PhraseType::Breakdown, 16, 8, 0.34f, false, true,  false, true  },
-        { PhraseType::Build,     24, 8, 0.66f, false, true,  true,  true  },
-        { PhraseType::Drop,      32, 16, 0.96f, true,  false, true,  true  },
-    };
 
     DeckTimeline deckB;
     deckB.id = DeckId::B;

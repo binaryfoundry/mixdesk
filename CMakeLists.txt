@@ -54,6 +54,8 @@ juce_add_gui_app(MixdeskPhraseWorkspace
 target_sources(MixdeskPhraseWorkspace
     PRIVATE
         Source/App/Main.cpp
+        Source/App/AppSettings.cpp
+        Source/App/AppSettings.h
         Source/App/MainComponent.cpp
         Source/App/MainComponent.h
         Source/Engine/BeatDetector.cpp
@@ -103,6 +105,8 @@ target_link_libraries(MixdeskPhraseWorkspace
 
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}/Source" PREFIX "Source" FILES
     Source/App/Main.cpp
+    Source/App/AppSettings.cpp
+    Source/App/AppSettings.h
     Source/App/MainComponent.cpp
     Source/App/MainComponent.h
     Source/Engine/BeatDetector.cpp

@@ -13,7 +13,10 @@ Recognized stems:
 - `drum` / `drums`
 - `bass`
 - `vocals` / `vocal`
-- `instrumental` / `instrument` / `no_vocals` / `no-vocals` / `novocals`
+- `instrumental` / `instrument` for legacy instrumental files
+- LALALAI-style complements: `no_bass`, `no_drum`, and `no_vocals` / `no-vocals` / `novocals`
+
+For names such as `street-tuff_no_bass_split_by_lalalai.mp3`, composite labels are matched before plain labels. This prevents `no_bass` from being mistaken for the isolated bass stem.
 
 Supported audio extensions include WAV, AIFF, FLAC, MP3, M4A, AAC, OGG, OPUS, WMA, and ALAC.
 
@@ -50,4 +53,4 @@ python C:\Users\paula\Documents\Projects\mixdesk\Tools\generate_mixdesk.py .
 
 ## Notes
 
-The app currently uses `mixdesk.json` to locate the original track file plus the drum, bass, vocal, and instrumental stems. The C++ app then derives the playable `Music` stem from raw, non-normalized buffers during import/preprocessing.
+The app currently uses `mixdesk.json` to locate the original track file plus direct drum/bass/vocal stems and the LALALAI complement stems. The C++ app decodes them to non-normalized floating-point PCM, derives complement candidates, and exposes only Drums, Bass, Vocals, and Music for playback.

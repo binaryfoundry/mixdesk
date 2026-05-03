@@ -12,12 +12,17 @@ from pathlib import Path
 from typing import Any
 
 
-STEM_PATTERNS = {
-    "drum": ("drum", "drums"),
-    "instrumental": ("instrumental", "instrument", "no_vocals", "no-vocals", "novocals"),
-    "vocals": ("vocals", "vocal"),
-    "bass": ("bass",),
-}
+STEM_MATCHES: tuple[tuple[str, tuple[tuple[str, ...], ...]], ...] = (
+    ("no_bass", (("no", "bass"), ("nobass",))),
+    ("no_drum", (("no", "drum"), ("no", "drums"), ("nodrum",), ("nodrums",))),
+    ("no_vocals", (("no", "vocals"), ("no", "vocal"), ("novocals",), ("novocal",))),
+    ("instrumental", (("instrumental",), ("instrument",))),
+    ("vocals", (("vocals",), ("vocal",))),
+    ("drum", (("drum",), ("drums",))),
+    ("bass", (("bass",),)),
+)
+
+ENTRY_STEMS = ("drum", "bass", "vocals", "no_bass", "no_drum", "no_vocals", "instrumental")
 
 AUDIO_EXTENSIONS = {
     ".aac",
@@ -106,15 +111,26 @@ def file_metadata(format_data: dict[str, Any]) -> dict[str, Any]:
     return metadata
 
 
-def filename_tokens(path: Path) -> set[str]:
+def filename_tokens(path: Path) -> tuple[str, ...]:
     normalized = path.stem.lower().replace("-", "_")
-    return {token for token in normalized.split("_") if token}
+    return tuple(token for token in normalized.split("_") if token)
+
+
+def contains_token_phrase(tokens: tuple[str, ...], phrase: tuple[str, ...]) -> bool:
+    if not phrase or len(phrase) > len(tokens):
+        return False
+
+    for start_index in range(0, len(tokens) - len(phrase) + 1):
+        if tokens[start_index : start_index + len(phrase)] == phrase:
+            return True
+
+    return False
 
 
 def classify_stem(path: Path) -> str | None:
     tokens = filename_tokens(path)
-    for stem_name, patterns in STEM_PATTERNS.items():
-        if any(pattern in tokens for pattern in patterns):
+    for stem_name, patterns in STEM_MATCHES:
+        if any(contains_token_phrase(tokens, pattern) for pattern in patterns):
             return stem_name
     return None
 
@@ -128,7 +144,7 @@ def pick_primary_track_file(directory: Path) -> Path | None:
     for path in audio_files:
         if classify_stem(path) is None:
             return path
-    return audio_files[0] if audio_files else None
+    return None
 
 
 def pick_stem_files(directory: Path) -> dict[str, Path]:
@@ -149,9 +165,12 @@ def build_mixdesk(directory: Path) -> dict[str, Any] | None:
     if not stem_files:
         return None
 
+    primary_track = pick_primary_track_file(directory)
+    if primary_track is None:
+        return None
+
     metadata: dict[str, dict[str, Any]] = {}
     entries: dict[str, dict[str, Any]] = {}
-    primary_track = pick_primary_track_file(directory)
     primary_metadata = run_ffprobe(primary_track) if primary_track else {}
     primary_tags = get_tags(primary_metadata)
     track_name = get_first_tag(primary_tags, TITLE_TAGS) or directory.name
@@ -161,7 +180,7 @@ def build_mixdesk(directory: Path) -> dict[str, Any] | None:
         "metadata": file_metadata(primary_metadata),
     }
 
-    for stem_name in STEM_PATTERNS:
+    for stem_name in ENTRY_STEMS:
         path = stem_files.get(stem_name)
         if path is None:
             entries[stem_name] = {"file": None, "key": None}

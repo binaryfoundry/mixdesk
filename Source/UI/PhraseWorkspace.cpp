@@ -210,6 +210,18 @@ void PhraseWorkspace::setStateSnapshot(model::WorkspaceState newState)
     repaint();
 }
 
+void PhraseWorkspace::showPendingTrackLoadMarker(model::DeckId deckId, int launchOffsetBars)
+{
+    pendingTrackLoadMarker = PendingTrackLoadMarker { deckId, launchOffsetBars };
+    repaint();
+}
+
+void PhraseWorkspace::clearPendingTrackLoadMarker()
+{
+    pendingTrackLoadMarker.reset();
+    repaint();
+}
+
 void PhraseWorkspace::paint(juce::Graphics& g)
 {
     g.fillAll(backgroundColour());
@@ -220,6 +232,7 @@ void PhraseWorkspace::paint(juce::Graphics& g)
     drawPhraseBlocks(g);
     drawPhraseMarkers(g);
     drawBeatMarkers(g);
+    drawPendingTrackLoadMarker(g);
     drawPlayhead(g);
 }
 
@@ -231,6 +244,26 @@ void PhraseWorkspace::mouseDown(const juce::MouseEvent& event)
 {
     const auto sourceIndex = event.source.getIndex();
     activePointers.insert_or_assign(sourceIndex, PointerContact { event.position, event.position, event.source.isTouch() });
+
+    if (event.getNumberOfClicks() >= 2 && isEmptyTrackLoadTarget(event.position))
+    {
+        if (const auto deckId = hitTestDeck(event.position))
+        {
+            selectedDeck = *deckId;
+            selectedBlockIndex.reset();
+            activeDrag.reset();
+            activeTrackDrag.reset();
+            activeBpmDragSource.reset();
+            activeVolumeDragSource.reset();
+
+            const auto launchOffsetBars = snapStartBar(barForX(event.position.x));
+            if (onTrackLoadRequested)
+                onTrackLoadRequested(*deckId, launchOffsetBars);
+
+            repaint();
+            return;
+        }
+    }
 
     if (getTransportButtonBounds().contains(event.position))
     {
@@ -1229,6 +1262,38 @@ void PhraseWorkspace::drawPlayhead(juce::Graphics& g)
     g.drawLine(x, grid.getY(), x, grid.getBottom(), 2.8f);
 }
 
+void PhraseWorkspace::drawPendingTrackLoadMarker(juce::Graphics& g)
+{
+    if (! pendingTrackLoadMarker.has_value())
+        return;
+
+    const auto deckIndex = model::deckIndex(pendingTrackLoadMarker->deckId);
+    if (deckIndex >= state.decks.size())
+        return;
+
+    const auto grid = getGridBounds();
+    const auto lane = getLaneBounds(deckIndex).reduced(4.0f, 10.0f);
+    const auto x = xForBar(static_cast<double>(pendingTrackLoadMarker->launchOffsetBars));
+
+    if (x < grid.getX() || x > grid.getRight())
+        return;
+
+    const auto timeSeconds = juce::Time::getMillisecondCounterHiRes() * 0.001;
+    const auto pulse = 0.5f + (0.5f * static_cast<float>(std::sin(timeSeconds * juce::MathConstants<double>::twoPi * 1.8)));
+    const auto alpha = 0.38f + (0.48f * pulse);
+    const auto colour = juce::Colour(0xff7fd86b).withAlpha(alpha);
+
+    g.setColour(colour.withAlpha(alpha * 0.16f));
+    g.fillRect(juce::Rectangle<float>(x - 8.0f, lane.getY(), 16.0f, lane.getHeight()));
+
+    g.setColour(colour);
+    g.drawLine(x, lane.getY(), x, lane.getBottom(), 3.0f);
+
+    juce::Path cap;
+    cap.addTriangle(x, lane.getY() - 1.0f, x - 8.0f, lane.getY() + 12.0f, x + 8.0f, lane.getY() + 12.0f);
+    g.fillPath(cap);
+}
+
 void PhraseWorkspace::drawControlRail(juce::Graphics& g)
 {
     const auto controls = getControlBounds();
@@ -1289,6 +1354,29 @@ std::optional<model::DeckId> PhraseWorkspace::hitTestDeck(juce::Point<float> pos
             return state.decks[deckIndex].id;
 
     return std::nullopt;
+}
+
+bool PhraseWorkspace::isOverLoadedTrack(juce::Point<float> position) const
+{
+    for (std::size_t deckIndex = 0; deckIndex < state.decks.size(); ++deckIndex)
+    {
+        const auto& deck = state.decks[deckIndex];
+        if (deck.loadedTrack.has_value() && getLoadedTrackBounds(deckIndex).contains(position))
+            return true;
+    }
+
+    return false;
+}
+
+bool PhraseWorkspace::isEmptyTrackLoadTarget(juce::Point<float> position) const
+{
+    if (! hitTestDeck(position).has_value())
+        return false;
+
+    if (hitTestBlock(position).has_value())
+        return false;
+
+    return ! isOverLoadedTrack(position);
 }
 
 int PhraseWorkspace::snapStartBar(double rawStartBar) const
