@@ -20,6 +20,7 @@ public:
     using PlaybackToggleCallback = std::function<void()>;
     using StemToggleCallback = std::function<void(model::DeckId, model::StemType, bool)>;
     using MasterVolumeCallback = std::function<void(float)>;
+    using BpmChangeCallback = std::function<void(double)>;
 
     PhraseWorkspace();
 
@@ -41,6 +42,7 @@ public:
     PlaybackToggleCallback onPlaybackToggleRequested;
     StemToggleCallback onStemToggleRequested;
     MasterVolumeCallback onMasterVolumeChanged;
+    BpmChangeCallback onBpmChanged;
 
 private:
     enum class SnapMode
@@ -105,6 +107,8 @@ private:
 
     juce::Rectangle<float> getHeaderBounds() const;
     juce::Rectangle<float> getTransportButtonBounds() const;
+    juce::Rectangle<float> getBpmBounds() const;
+    juce::Rectangle<float> getBpmTrackBounds() const;
     juce::Rectangle<float> getMasterVolumeBounds() const;
     juce::Rectangle<float> getMasterVolumeTrackBounds() const;
     juce::Rectangle<float> getTimelineBounds() const;
@@ -149,6 +153,8 @@ private:
     ConflictFlags detectConflictForBlock(std::size_t deckIndex, std::size_t blockIndex) const;
     float volumeForX(float x) const;
     void setMasterVolumeFromPoint(juce::Point<float> position);
+    double bpmForX(float x) const;
+    void setBpmFromPoint(juce::Point<float> position);
     bool isWorkspacePlaying() const;
     void zoomAround(float componentX, float scaleFactor);
     void updatePinchZoomFromPointers();
@@ -158,6 +164,7 @@ private:
     std::optional<std::size_t> selectedBlockIndex;
     std::optional<ActiveDrag> activeDrag;
     std::optional<ActiveTrackDrag> activeTrackDrag;
+    std::optional<int> activeBpmDragSource;
     std::optional<int> activeVolumeDragSource;
     std::unordered_map<int, PointerContact> activePointers;
 

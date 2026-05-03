@@ -81,6 +81,36 @@ double trackSecondsToGridBar(double trackSeconds, double secondsPerBar, double f
 
     return static_cast<double>(launchOffsetBars) + ((trackSeconds - firstBeatOffsetSeconds) / secondsPerBar);
 }
+
+double playbackRateFor(double deckSecondsPerBar, double globalSecondsPerBar)
+{
+    if (deckSecondsPerBar <= 0.0 || globalSecondsPerBar <= 0.0)
+        return 1.0;
+
+    return std::clamp(deckSecondsPerBar / globalSecondsPerBar, 0.25, 4.0);
+}
+
+double bpmToSecondsPerBar(double bpm, int beatsPerBar)
+{
+    if (bpm <= 0.0)
+        return 0.0;
+
+    return (60.0 / bpm) * static_cast<double>(std::max(1, beatsPerBar));
+}
+
+float mixedSampleAt(const DeckPlaybackEngine::PlaybackBuffer& residualInstrumental,
+    const DeckPlaybackEngine::PlaybackBuffer& drums,
+    const DeckPlaybackEngine::PlaybackBuffer& bass,
+    const DeckPlaybackEngine::PlaybackBuffer& vocal,
+    const model::StemEnableState& stemEnabled,
+    int channel,
+    double timeSeconds)
+{
+    return sampleAt(residualInstrumental, channel, timeSeconds)
+        + (stemEnabled.drums ? sampleAt(drums, channel, timeSeconds) : 0.0f)
+        + (stemEnabled.bass ? sampleAt(bass, channel, timeSeconds) : 0.0f)
+        + (stemEnabled.vocal ? sampleAt(vocal, channel, timeSeconds) : 0.0f);
+}
 } // namespace
 
 DeckPlaybackEngine::DeckPlaybackEngine()
@@ -135,10 +165,13 @@ bool DeckPlaybackEngine::loadFile(const juce::File& file)
         vocal = {};
         loadedFile = file;
         currentPositionSeconds = 0.0;
-        currentGridBarPosition = trackSecondsToGridBar(currentPositionSeconds, secondsPerBar, firstBeatOffsetSeconds, launchOffsetBars);
+        currentGridBarPosition = trackSecondsToGridBar(currentPositionSeconds, deckSecondsPerBar, firstBeatOffsetSeconds, launchOffsetBars);
+        stretchInputPositionSeconds = currentPositionSeconds;
+        stretchInputRemainderSamples = 0.0;
         lengthSeconds = bufferDurationSeconds(residualInstrumental);
         playing = false;
         loaded = lengthSeconds > 0.0;
+        timeStretchNeedsReset = true;
     }
 
     return loaded;
@@ -197,10 +230,13 @@ bool DeckPlaybackEngine::loadStemSet(const juce::File& instrumentalFile,
         vocal = std::move(vocalBuffer);
         loadedFile = instrumentalFile;
         currentPositionSeconds = 0.0;
-        currentGridBarPosition = trackSecondsToGridBar(currentPositionSeconds, secondsPerBar, firstBeatOffsetSeconds, launchOffsetBars);
+        currentGridBarPosition = trackSecondsToGridBar(currentPositionSeconds, deckSecondsPerBar, firstBeatOffsetSeconds, launchOffsetBars);
+        stretchInputPositionSeconds = currentPositionSeconds;
+        stretchInputRemainderSamples = 0.0;
         lengthSeconds = maxDurationSeconds(residualInstrumental, drums, bass, vocal);
         playing = false;
         loaded = lengthSeconds > 0.0;
+        timeStretchNeedsReset = true;
     }
 
     return loaded;
@@ -212,7 +248,10 @@ void DeckPlaybackEngine::start()
     if (! loaded)
         return;
 
-    currentPositionSeconds = gridBarToTrackSeconds(currentGridBarPosition, secondsPerBar, firstBeatOffsetSeconds, launchOffsetBars);
+    currentPositionSeconds = gridBarToTrackSeconds(currentGridBarPosition, deckSecondsPerBar, firstBeatOffsetSeconds, launchOffsetBars);
+    stretchInputPositionSeconds = currentPositionSeconds;
+    stretchInputRemainderSamples = 0.0;
+    timeStretchNeedsReset = true;
 
     playing = true;
 }
@@ -231,20 +270,37 @@ void DeckPlaybackEngine::togglePlayback()
         start();
 }
 
-void DeckPlaybackEngine::configureGridPlayback(double newSecondsPerBar, double newFirstBeatOffsetSeconds, int newLaunchOffsetBars)
+void DeckPlaybackEngine::configureGridPlayback(double newDeckSecondsPerBar, double newFirstBeatOffsetSeconds, int newLaunchOffsetBars)
 {
     const juce::ScopedLock scopedLock(lock);
-    secondsPerBar = std::max(0.0, newSecondsPerBar);
+    deckSecondsPerBar = std::max(0.0, newDeckSecondsPerBar);
+    if (globalSecondsPerBar <= 0.0)
+        globalSecondsPerBar = deckSecondsPerBar;
+
     firstBeatOffsetSeconds = newFirstBeatOffsetSeconds;
     launchOffsetBars = newLaunchOffsetBars;
-    currentPositionSeconds = gridBarToTrackSeconds(currentGridBarPosition, secondsPerBar, firstBeatOffsetSeconds, launchOffsetBars);
+    currentPositionSeconds = gridBarToTrackSeconds(currentGridBarPosition, deckSecondsPerBar, firstBeatOffsetSeconds, launchOffsetBars);
+    stretchInputPositionSeconds = currentPositionSeconds;
+    stretchInputRemainderSamples = 0.0;
+    timeStretchNeedsReset = true;
+}
+
+void DeckPlaybackEngine::setGlobalBpm(double bpm, int beatsPerBar)
+{
+    const juce::ScopedLock scopedLock(lock);
+    const auto newGlobalSecondsPerBar = bpmToSecondsPerBar(bpm, beatsPerBar);
+    if (newGlobalSecondsPerBar > 0.0)
+        globalSecondsPerBar = newGlobalSecondsPerBar;
 }
 
 void DeckPlaybackEngine::setLaunchOffsetBars(int newLaunchOffsetBars)
 {
     const juce::ScopedLock scopedLock(lock);
     launchOffsetBars = newLaunchOffsetBars;
-    currentPositionSeconds = gridBarToTrackSeconds(currentGridBarPosition, secondsPerBar, firstBeatOffsetSeconds, launchOffsetBars);
+    currentPositionSeconds = gridBarToTrackSeconds(currentGridBarPosition, deckSecondsPerBar, firstBeatOffsetSeconds, launchOffsetBars);
+    stretchInputPositionSeconds = currentPositionSeconds;
+    stretchInputRemainderSamples = 0.0;
+    timeStretchNeedsReset = true;
 }
 
 void DeckPlaybackEngine::setStemEnabled(model::StemType stemType, bool enabled)
@@ -289,10 +345,17 @@ juce::File DeckPlaybackEngine::getLoadedFile() const
     return loadedFile;
 }
 
-void DeckPlaybackEngine::prepareToPlay(int, double sampleRate)
+void DeckPlaybackEngine::prepareToPlay(int samplesPerBlockExpected, double sampleRate)
 {
     const juce::ScopedLock scopedLock(lock);
     outputSampleRate = sampleRate;
+    if (outputSampleRate > 0.0)
+    {
+        timeStretch.presetDefault(2, static_cast<float>(outputSampleRate));
+        ensureStretchBuffers(std::max(1, samplesPerBlockExpected * 2), std::max(1, samplesPerBlockExpected));
+        timeStretchConfigured = true;
+        timeStretchNeedsReset = true;
+    }
 }
 
 void DeckPlaybackEngine::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferToFill)
@@ -300,35 +363,52 @@ void DeckPlaybackEngine::getNextAudioBlock(const juce::AudioSourceChannelInfo& b
     const juce::ScopedLock scopedLock(lock);
     bufferToFill.clearActiveBufferRegion();
 
-    if (! loaded || ! playing || outputSampleRate <= 0.0 || bufferToFill.buffer == nullptr)
+    if (! loaded || ! playing || outputSampleRate <= 0.0 || bufferToFill.buffer == nullptr || ! timeStretchConfigured)
         return;
 
     auto* outputBuffer = bufferToFill.buffer;
     const auto endSample = bufferToFill.startSample + bufferToFill.numSamples;
+    const auto playbackRate = playbackRateFor(deckSecondsPerBar, globalSecondsPerBar);
+    const auto exactInputSamples = (static_cast<double>(bufferToFill.numSamples) * playbackRate) + stretchInputRemainderSamples;
+    const auto inputSamples = std::max(1, static_cast<int>(std::floor(exactInputSamples)));
+    stretchInputRemainderSamples = exactInputSamples - static_cast<double>(inputSamples);
+
+    currentPositionSeconds = gridBarToTrackSeconds(currentGridBarPosition, deckSecondsPerBar, firstBeatOffsetSeconds, launchOffsetBars);
+    if (currentPositionSeconds >= lengthSeconds)
+    {
+        playing = false;
+        return;
+    }
+
+    ensureStretchBuffers(inputSamples, bufferToFill.numSamples);
+
+    if (timeStretchNeedsReset)
+        resetTimeStretch(playbackRate);
+
+    for (auto inputSample = 0; inputSample < inputSamples; ++inputSample)
+    {
+        const auto timeSeconds = stretchInputPositionSeconds + (static_cast<double>(inputSample) / outputSampleRate);
+        stretchInputBuffer.setSample(0, inputSample, mixedSampleAt(residualInstrumental, drums, bass, vocal, stemEnabled, 0, timeSeconds));
+        stretchInputBuffer.setSample(1, inputSample, mixedSampleAt(residualInstrumental, drums, bass, vocal, stemEnabled, 1, timeSeconds));
+    }
+
+    stretchInputPositionSeconds += static_cast<double>(inputSamples) / outputSampleRate;
+    timeStretch.process(stretchInputChannels.data(), inputSamples, stretchOutputChannels.data(), bufferToFill.numSamples);
 
     for (auto sample = bufferToFill.startSample; sample < endSample; ++sample)
     {
-        currentPositionSeconds = gridBarToTrackSeconds(currentGridBarPosition, secondsPerBar, firstBeatOffsetSeconds, launchOffsetBars);
-        if (currentPositionSeconds >= lengthSeconds)
-        {
-            playing = false;
-            break;
-        }
-
+        const auto outputSampleIndex = sample - bufferToFill.startSample;
         for (auto channel = 0; channel < outputBuffer->getNumChannels(); ++channel)
         {
-            const auto mixedSample = sampleAt(residualInstrumental, channel, currentPositionSeconds)
-                + (stemEnabled.drums ? sampleAt(drums, channel, currentPositionSeconds) : 0.0f)
-                + (stemEnabled.bass ? sampleAt(bass, channel, currentPositionSeconds) : 0.0f)
-                + (stemEnabled.vocal ? sampleAt(vocal, channel, currentPositionSeconds) : 0.0f);
-
-            outputBuffer->setSample(channel, sample, mixedSample * masterVolume);
+            const auto sourceChannel = std::min(channel, 1);
+            outputBuffer->setSample(channel, sample, stretchOutputBuffer.getSample(sourceChannel, outputSampleIndex) * masterVolume);
         }
+    }
 
-        if (secondsPerBar > 0.0)
-            currentGridBarPosition += (1.0 / outputSampleRate) / secondsPerBar;
-        else
-            currentPositionSeconds += 1.0 / outputSampleRate;
+    if (globalSecondsPerBar > 0.0)
+    {
+        currentGridBarPosition += (static_cast<double>(bufferToFill.numSamples) / outputSampleRate) / globalSecondsPerBar;
+        currentPositionSeconds = gridBarToTrackSeconds(currentGridBarPosition, deckSecondsPerBar, firstBeatOffsetSeconds, launchOffsetBars);
     }
 }
 
@@ -336,5 +416,21 @@ void DeckPlaybackEngine::releaseResources()
 {
     const juce::ScopedLock scopedLock(lock);
     outputSampleRate = 0.0;
+}
+
+void DeckPlaybackEngine::resetTimeStretch(double)
+{
+    timeStretch.reset();
+    stretchInputPositionSeconds = gridBarToTrackSeconds(currentGridBarPosition, deckSecondsPerBar, firstBeatOffsetSeconds, launchOffsetBars);
+    stretchInputRemainderSamples = 0.0;
+    timeStretchNeedsReset = false;
+}
+
+void DeckPlaybackEngine::ensureStretchBuffers(int inputSamples, int outputSamples)
+{
+    stretchInputBuffer.setSize(2, std::max(1, inputSamples), false, false, true);
+    stretchOutputBuffer.setSize(2, std::max(1, outputSamples), false, false, true);
+    stretchInputChannels = { stretchInputBuffer.getWritePointer(0), stretchInputBuffer.getWritePointer(1) };
+    stretchOutputChannels = { stretchOutputBuffer.getWritePointer(0), stretchOutputBuffer.getWritePointer(1) };
 }
 } // namespace mixdesk::engine

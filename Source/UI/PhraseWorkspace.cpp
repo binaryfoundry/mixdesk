@@ -11,6 +11,8 @@ namespace
 constexpr auto laneGap = 10.0f;
 constexpr auto loadedTrackTitleHeight = 34.0f;
 constexpr auto loadedTrackTitleGap = 6.0f;
+constexpr auto minGlobalBpm = 80.0;
+constexpr auto maxGlobalBpm = 180.0;
 constexpr std::array stemToggleOrder { model::StemType::Drums, model::StemType::Bass, model::StemType::Vocal };
 
 juce::Colour backgroundColour() { return juce::Colour(0xff101318); }
@@ -247,6 +249,17 @@ void PhraseWorkspace::mouseDown(const juce::MouseEvent& event)
         return;
     }
 
+    if (getBpmBounds().contains(event.position))
+    {
+        selectedBlockIndex.reset();
+        activeDrag.reset();
+        activeTrackDrag.reset();
+        activeBpmDragSource = sourceIndex;
+        setBpmFromPoint(event.position);
+        repaint();
+        return;
+    }
+
     if (const auto hit = hitTestStemToggle(event.position))
     {
         selectedDeck = hit->deckId;
@@ -369,6 +382,12 @@ void PhraseWorkspace::mouseDrag(const juce::MouseEvent& event)
         repaint();
     }
 
+    if (activeBpmDragSource.has_value() && *activeBpmDragSource == sourceIndex)
+    {
+        setBpmFromPoint(event.position);
+        repaint();
+    }
+
     updatePinchZoomFromPointers();
 }
 
@@ -394,6 +413,9 @@ void PhraseWorkspace::mouseUp(const juce::MouseEvent& event)
 
     if (activeVolumeDragSource.has_value() && *activeVolumeDragSource == sourceIndex)
         activeVolumeDragSource.reset();
+
+    if (activeBpmDragSource.has_value() && *activeBpmDragSource == sourceIndex)
+        activeBpmDragSource.reset();
 
     activePointers.erase(sourceIndex);
 }
@@ -426,6 +448,17 @@ juce::Rectangle<float> PhraseWorkspace::getTransportButtonBounds() const
     const auto header = getHeaderBounds();
     const auto size = 42.0f;
     return { header.getX() + outerPadding, header.getCentreY() - (size * 0.5f), size, size };
+}
+
+juce::Rectangle<float> PhraseWorkspace::getBpmBounds() const
+{
+    const auto header = getHeaderBounds();
+    return { header.getRight() - outerPadding - 452.0f, header.getY() + 11.0f, 220.0f, header.getHeight() - 22.0f };
+}
+
+juce::Rectangle<float> PhraseWorkspace::getBpmTrackBounds() const
+{
+    return getBpmBounds().reduced(14.0f, 0.0f).withTrimmedTop(24.0f).withHeight(10.0f);
 }
 
 juce::Rectangle<float> PhraseWorkspace::getMasterVolumeBounds() const
@@ -598,6 +631,8 @@ void PhraseWorkspace::drawHeader(juce::Graphics& g)
 
     auto content = header.reduced(outerPadding, 0.0f);
     const auto transportButton = getTransportButtonBounds();
+    const auto bpmBounds = getBpmBounds();
+    const auto bpmTrack = getBpmTrackBounds();
     const auto volumeBounds = getMasterVolumeBounds();
     const auto volumeTrack = getMasterVolumeTrackBounds();
     const auto isPlaying = isWorkspacePlaying();
@@ -625,7 +660,7 @@ void PhraseWorkspace::drawHeader(juce::Graphics& g)
     }
 
     content.removeFromLeft(transportButton.getWidth() + 14.0f);
-    content.removeFromRight(volumeBounds.getWidth() + 14.0f);
+    content.removeFromRight(bpmBounds.getWidth() + volumeBounds.getWidth() + 26.0f);
     auto titleArea = content.removeFromLeft(330.0f);
 
     g.setColour(textColour());
@@ -653,6 +688,32 @@ void PhraseWorkspace::drawHeader(juce::Graphics& g)
 
     g.setColour(mutedTextColour());
     g.drawText(statusText, content.toNearestInt(), juce::Justification::centredRight, true);
+
+    const auto bpm = std::clamp(state.bpm, minGlobalBpm, maxGlobalBpm);
+    const auto bpmNormalized = (bpm - minGlobalBpm) / (maxGlobalBpm - minGlobalBpm);
+    g.setColour(juce::Colour(0xff101820));
+    g.fillRoundedRectangle(bpmBounds, 8.0f);
+    g.setColour(juce::Colour(0xff2a333b));
+    g.drawRoundedRectangle(bpmBounds, 8.0f, 1.0f);
+
+    const auto bpmLabel = juce::String("BPM ") + juce::String(bpm, 1);
+    g.setColour(textColour());
+    g.setFont(makeFont(12.5f, juce::Font::bold));
+    g.drawFittedText(bpmLabel, bpmBounds.reduced(12.0f, 3.0f).removeFromTop(18.0f).toNearestInt(),
+        juce::Justification::centredLeft, 1);
+
+    g.setColour(juce::Colour(0xff0a1014));
+    g.fillRoundedRectangle(bpmTrack, 5.0f);
+    const auto bpmFillWidth = static_cast<float>(bpmNormalized) * bpmTrack.getWidth();
+    g.setColour(juce::Colour(0xff75d1e0));
+    g.fillRoundedRectangle(bpmTrack.withWidth(bpmFillWidth), 5.0f);
+
+    const auto bpmThumbX = bpmTrack.getX() + bpmFillWidth;
+    const auto bpmThumb = juce::Rectangle<float>(bpmThumbX - 9.0f, bpmTrack.getCentreY() - 13.0f, 18.0f, 26.0f);
+    g.setColour(juce::Colour(0xffeef3f5));
+    g.fillRoundedRectangle(bpmThumb, 7.0f);
+    g.setColour(juce::Colour(0xff101318).withAlpha(0.68f));
+    g.drawRoundedRectangle(bpmThumb, 7.0f, 1.0f);
 
     const auto volume = std::clamp(state.masterVolume, 0.0f, 1.0f);
     g.setColour(juce::Colour(0xff101820));
@@ -1324,6 +1385,28 @@ void PhraseWorkspace::setMasterVolumeFromPoint(juce::Point<float> position)
 
     if (onMasterVolumeChanged)
         onMasterVolumeChanged(volume);
+}
+
+double PhraseWorkspace::bpmForX(float x) const
+{
+    const auto track = getBpmTrackBounds();
+    if (track.getWidth() <= 0.0f)
+        return state.bpm;
+
+    const auto normalized = std::clamp((x - track.getX()) / track.getWidth(), 0.0f, 1.0f);
+    return minGlobalBpm + (static_cast<double>(normalized) * (maxGlobalBpm - minGlobalBpm));
+}
+
+void PhraseWorkspace::setBpmFromPoint(juce::Point<float> position)
+{
+    const auto bpm = bpmForX(position.x);
+    if (std::abs(state.bpm - bpm) < 0.05)
+        return;
+
+    state.bpm = bpm;
+
+    if (onBpmChanged)
+        onBpmChanged(bpm);
 }
 
 bool PhraseWorkspace::isWorkspacePlaying() const

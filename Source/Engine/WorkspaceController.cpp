@@ -102,4 +102,9 @@ void WorkspaceController::apply(const SetMasterVolumeCommand& command)
 {
     state.masterVolume = std::clamp(command.volume, 0.0f, 1.0f);
 }
+
+void WorkspaceController::apply(const SetBpmCommand& command)
+{
+    state.bpm = std::clamp(command.bpm, 40.0, 240.0);
+}
 } // namespace mixdesk::engine

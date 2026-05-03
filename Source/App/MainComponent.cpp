@@ -92,6 +92,13 @@ MainComponent::MainComponent()
         refreshWorkspaceSnapshot();
     };
 
+    phraseWorkspace->onBpmChanged = [this](double bpm)
+    {
+        workspaceController.dispatch(engine::SetBpmCommand { bpm });
+        deckPlaybackEngine.setGlobalBpm(bpm, deckOneBeatGrid.has_value() ? deckOneBeatGrid->beatsPerBar : 4);
+        refreshWorkspaceSnapshot();
+    };
+
     loadDeckOneFromTracksFolder();
     refreshWorkspaceSnapshot();
 
@@ -216,6 +223,8 @@ void MainComponent::configureDeckOneGridPlayback()
 
     const auto secondsPerBar = deckOneBeatGrid->secondsPerBeat * static_cast<double>(std::max(1, deckOneBeatGrid->beatsPerBar));
     deckPlaybackEngine.configureGridPlayback(secondsPerBar, deckOneBeatGrid->firstBeatOffsetSeconds, deckOneLaunchOffsetBars);
+    deckPlaybackEngine.setGlobalBpm(deckOneBeatGrid->bpm > 0 ? static_cast<double>(deckOneBeatGrid->bpm) : deckOneBeatGrid->tempo,
+        deckOneBeatGrid->beatsPerBar);
 }
 
 void MainComponent::refreshWorkspaceSnapshot()

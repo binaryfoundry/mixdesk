@@ -63,6 +63,11 @@ struct SetMasterVolumeCommand
     float volume { 1.0f };
 };
 
+struct SetBpmCommand
+{
+    double bpm { 124.0 };
+};
+
 using WorkspaceCommand = std::variant<
     MovePhraseBlockCommand,
     NudgeLaunchOffsetCommand,
@@ -72,7 +77,8 @@ using WorkspaceCommand = std::variant<
     SetDeckPlayingCommand,
     SetDeckStemEnabledCommand,
     SetCurrentBarPositionCommand,
-    SetMasterVolumeCommand>;
+    SetMasterVolumeCommand,
+    SetBpmCommand>;
 
 class WorkspaceController
 {
@@ -92,6 +98,7 @@ private:
     void apply(const SetDeckStemEnabledCommand& command);
     void apply(const SetCurrentBarPositionCommand& command);
     void apply(const SetMasterVolumeCommand& command);
+    void apply(const SetBpmCommand& command);
 
     model::WorkspaceState state;
 };

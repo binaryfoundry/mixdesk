@@ -32,6 +32,19 @@ else()
     message(FATAL_ERROR "Set JUCE_DIR to a JUCE checkout or enable MIXDESK_FETCH_JUCE.")
 endif()
 
+FetchContent_Declare(
+    SignalsmithStretch
+    GIT_REPOSITORY https://github.com/Signalsmith-Audio/signalsmith-stretch.git
+    GIT_TAG 1.1.0
+    GIT_SHALLOW TRUE
+    GIT_PROGRESS TRUE
+)
+FetchContent_MakeAvailable(SignalsmithStretch)
+if(NOT TARGET signalsmith-stretch)
+    add_library(signalsmith-stretch INTERFACE)
+    target_include_directories(signalsmith-stretch SYSTEM INTERFACE "${signalsmithstretch_SOURCE_DIR}")
+endif()
+
 juce_add_gui_app(MixdeskPhraseWorkspace
     PRODUCT_NAME "Mixdesk Phrase Workspace"
     COMPANY_NAME "Mixdesk"
@@ -80,6 +93,7 @@ target_link_libraries(MixdeskPhraseWorkspace
     PRIVATE
         juce::juce_gui_extra
         juce::juce_audio_utils
+        signalsmith-stretch
         juce::juce_recommended_config_flags
         juce::juce_recommended_warning_flags
         juce::juce_recommended_lto_flags
