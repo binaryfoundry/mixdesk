@@ -7,7 +7,7 @@ namespace mixdesk::app
 class MixdeskApplication final : public juce::JUCEApplication
 {
 public:
-    const juce::String getApplicationName() override { return "Mixdesk Phrase Workspace"; }
+    const juce::String getApplicationName() override { return "MixDesk"; }
     const juce::String getApplicationVersion() override { return "0.1.0"; }
     bool moreThanOneInstanceAllowed() override { return true; }
 

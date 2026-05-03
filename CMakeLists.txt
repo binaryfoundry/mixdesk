@@ -46,7 +46,7 @@ if(NOT TARGET signalsmith-stretch)
 endif()
 
 juce_add_gui_app(MixdeskPhraseWorkspace
-    PRODUCT_NAME "Mixdesk Phrase Workspace"
+    PRODUCT_NAME "MixDesk"
     COMPANY_NAME "Mixdesk"
     BUNDLE_ID "com.mixdesk.phraseworkspace"
 )

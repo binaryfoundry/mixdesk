@@ -1,4 +1,4 @@
-# Mixdesk Phrase Workspace Prototype
+# MixDesk Prototype
 
 This is a small JUCE/C++20 prototype for a touch-first 3-deck DJ phrase alignment workspace. It intentionally does not imitate CDJs, turntables, or a mixer surface. The main object is musical time: three horizontal deck lanes show phrase blocks against a shared bar grid.
 

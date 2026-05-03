@@ -705,7 +705,7 @@ void PhraseWorkspace::drawHeader(juce::Graphics& g)
 
     g.setColour(textColour());
     g.setFont(makeFont(21.0f, juce::Font::bold));
-    g.drawText("Phrase Alignment Workspace", titleArea.removeFromTop(36.0f).toNearestInt(),
+    g.drawText("MixDesk", titleArea.removeFromTop(36.0f).toNearestInt(),
         juce::Justification::centredLeft, true);
 
     if (const auto* deckA = model::findDeck(state, model::DeckId::A);
