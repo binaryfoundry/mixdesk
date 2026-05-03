@@ -60,6 +60,34 @@ std::string_view toString(StemType type) noexcept
     return "Stem";
 }
 
+bool isStemEnabled(const StemEnableState& stemState, StemType stemType) noexcept
+{
+    switch (stemType)
+    {
+        case StemType::Drums: return stemState.drums;
+        case StemType::Bass: return stemState.bass;
+        case StemType::Vocal: return stemState.vocal;
+    }
+
+    return true;
+}
+
+void setStemEnabled(StemEnableState& stemState, StemType stemType, bool enabled) noexcept
+{
+    switch (stemType)
+    {
+        case StemType::Drums:
+            stemState.drums = enabled;
+            break;
+        case StemType::Bass:
+            stemState.bass = enabled;
+            break;
+        case StemType::Vocal:
+            stemState.vocal = enabled;
+            break;
+    }
+}
+
 DeckRole nextRole(DeckRole role) noexcept
 {
     switch (role)

@@ -84,6 +84,15 @@ void WorkspaceController::apply(const SetDeckPlayingCommand& command)
     deck->isPlaying = command.isPlaying;
 }
 
+void WorkspaceController::apply(const SetDeckStemEnabledCommand& command)
+{
+    auto* deck = model::findDeck(state, command.deckId);
+    if (deck == nullptr)
+        return;
+
+    model::setStemEnabled(deck->stemEnabled, command.stemType, command.enabled);
+}
+
 void WorkspaceController::apply(const SetCurrentBarPositionCommand& command)
 {
     state.currentBarPosition = command.barPosition;

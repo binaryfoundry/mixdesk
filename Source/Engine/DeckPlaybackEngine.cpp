@@ -247,6 +247,12 @@ void DeckPlaybackEngine::setLaunchOffsetBars(int newLaunchOffsetBars)
     currentPositionSeconds = gridBarToTrackSeconds(currentGridBarPosition, secondsPerBar, firstBeatOffsetSeconds, launchOffsetBars);
 }
 
+void DeckPlaybackEngine::setStemEnabled(model::StemType stemType, bool enabled)
+{
+    const juce::ScopedLock scopedLock(lock);
+    model::setStemEnabled(stemEnabled, stemType, enabled);
+}
+
 bool DeckPlaybackEngine::isPlaying() const
 {
     const juce::ScopedLock scopedLock(lock);
@@ -307,9 +313,9 @@ void DeckPlaybackEngine::getNextAudioBlock(const juce::AudioSourceChannelInfo& b
         for (auto channel = 0; channel < outputBuffer->getNumChannels(); ++channel)
         {
             const auto mixedSample = sampleAt(residualInstrumental, channel, currentPositionSeconds)
-                + sampleAt(drums, channel, currentPositionSeconds)
-                + sampleAt(bass, channel, currentPositionSeconds)
-                + sampleAt(vocal, channel, currentPositionSeconds);
+                + (stemEnabled.drums ? sampleAt(drums, channel, currentPositionSeconds) : 0.0f)
+                + (stemEnabled.bass ? sampleAt(bass, channel, currentPositionSeconds) : 0.0f)
+                + (stemEnabled.vocal ? sampleAt(vocal, channel, currentPositionSeconds) : 0.0f);
 
             outputBuffer->setSample(channel, sample, mixedSample * masterGain);
         }

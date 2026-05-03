@@ -18,6 +18,7 @@ public:
     using TrackMoveCallback = std::function<void(model::DeckId, int)>;
     using RoleChangeCallback = std::function<void(model::DeckId, model::DeckRole)>;
     using PlaybackToggleCallback = std::function<void()>;
+    using StemToggleCallback = std::function<void(model::DeckId, model::StemType, bool)>;
 
     PhraseWorkspace();
 
@@ -37,6 +38,7 @@ public:
     TrackMoveCallback onTrackLaunchOffsetMoved;
     RoleChangeCallback onRoleChangeRequested;
     PlaybackToggleCallback onPlaybackToggleRequested;
+    StemToggleCallback onStemToggleRequested;
 
 private:
     enum class SnapMode
@@ -56,6 +58,13 @@ private:
     {
         std::size_t deckIndex {};
         model::DeckId deckId {};
+    };
+
+    struct HitStemToggle
+    {
+        std::size_t deckIndex {};
+        model::DeckId deckId {};
+        model::StemType stemType { model::StemType::Drums };
     };
 
     struct ActiveDrag
@@ -98,6 +107,7 @@ private:
     juce::Rectangle<float> getGridBounds() const;
     juce::Rectangle<float> getControlBounds() const;
     juce::Rectangle<float> getDeckLabelBounds(std::size_t deckIndex) const;
+    juce::Rectangle<float> getStemToggleBounds(std::size_t deckIndex, model::StemType stemType) const;
     juce::Rectangle<float> getLaneBounds(std::size_t deckIndex) const;
     juce::Rectangle<float> getBlockBounds(std::size_t deckIndex, std::size_t blockIndex) const;
     juce::Rectangle<float> getLoadedTrackBounds(std::size_t deckIndex) const;
@@ -123,6 +133,7 @@ private:
 
     std::optional<HitBlock> hitTestBlock(juce::Point<float> position) const;
     std::optional<HitTrack> hitTestLoadedTrack(juce::Point<float> position) const;
+    std::optional<HitStemToggle> hitTestStemToggle(juce::Point<float> position) const;
     std::optional<model::DeckId> hitTestDeck(juce::Point<float> position) const;
 
     int snapStartBar(double rawStartBar) const;

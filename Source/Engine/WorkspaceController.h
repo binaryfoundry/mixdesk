@@ -46,6 +46,13 @@ struct SetDeckPlayingCommand
     bool isPlaying {};
 };
 
+struct SetDeckStemEnabledCommand
+{
+    model::DeckId deckId {};
+    model::StemType stemType { model::StemType::Drums };
+    bool enabled { true };
+};
+
 struct SetCurrentBarPositionCommand
 {
     double barPosition {};
@@ -58,6 +65,7 @@ using WorkspaceCommand = std::variant<
     SetDeckRoleCommand,
     SetDeckLoadedTrackCommand,
     SetDeckPlayingCommand,
+    SetDeckStemEnabledCommand,
     SetCurrentBarPositionCommand>;
 
 class WorkspaceController
@@ -75,6 +83,7 @@ private:
     void apply(const SetDeckRoleCommand& command);
     void apply(const SetDeckLoadedTrackCommand& command);
     void apply(const SetDeckPlayingCommand& command);
+    void apply(const SetDeckStemEnabledCommand& command);
     void apply(const SetCurrentBarPositionCommand& command);
 
     model::WorkspaceState state;

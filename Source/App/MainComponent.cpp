@@ -75,6 +75,16 @@ MainComponent::MainComponent()
         togglePlayback();
     };
 
+    phraseWorkspace->onStemToggleRequested = [this](model::DeckId deckId, model::StemType stemType, bool enabled)
+    {
+        workspaceController.dispatch(engine::SetDeckStemEnabledCommand { deckId, stemType, enabled });
+
+        if (deckId == model::DeckId::A)
+            deckPlaybackEngine.setStemEnabled(stemType, enabled);
+
+        refreshWorkspaceSnapshot();
+    };
+
     loadDeckOneFromTracksFolder();
     refreshWorkspaceSnapshot();
 

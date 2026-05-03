@@ -11,6 +11,7 @@ namespace
 constexpr auto laneGap = 10.0f;
 constexpr auto loadedTrackTitleHeight = 34.0f;
 constexpr auto loadedTrackTitleGap = 6.0f;
+constexpr std::array stemToggleOrder { model::StemType::Drums, model::StemType::Bass, model::StemType::Vocal };
 
 juce::Colour backgroundColour() { return juce::Colour(0xff101318); }
 juce::Colour panelColour() { return juce::Colour(0xff171c22); }
@@ -55,12 +56,17 @@ bool deckIsActive(const model::DeckTimeline& deck) noexcept
 
 bool activeBass(const model::DeckTimeline& deck, const model::PhraseBlock& block) noexcept
 {
-    return deckIsActive(deck) && block.hasBass && ! deck.lowCutEnabled;
+    return deckIsActive(deck)
+        && block.hasBass
+        && model::isStemEnabled(deck.stemEnabled, model::StemType::Bass)
+        && ! deck.lowCutEnabled;
 }
 
 bool activeVocal(const model::DeckTimeline& deck, const model::PhraseBlock& block) noexcept
 {
-    return deckIsActive(deck) && block.hasVocal;
+    return deckIsActive(deck)
+        && block.hasVocal
+        && model::isStemEnabled(deck.stemEnabled, model::StemType::Vocal);
 }
 
 juce::Colour phraseColour(model::PhraseType type)
@@ -90,6 +96,27 @@ juce::Colour stemColour(model::StemType type)
     }
 
     return juce::Colours::white;
+}
+
+int stemToggleIndex(model::StemType stemType)
+{
+    for (auto index = 0; index < static_cast<int>(stemToggleOrder.size()); ++index)
+        if (stemToggleOrder[static_cast<std::size_t>(index)] == stemType)
+            return index;
+
+    return 0;
+}
+
+juce::String stemShortLabel(model::StemType stemType)
+{
+    switch (stemType)
+    {
+        case model::StemType::Drums: return "D";
+        case model::StemType::Bass: return "B";
+        case model::StemType::Vocal: return "V";
+    }
+
+    return "?";
 }
 
 juce::String fixedOneDecimal(double value)
@@ -204,6 +231,27 @@ void PhraseWorkspace::mouseDown(const juce::MouseEvent& event)
 
         if (onPlaybackToggleRequested)
             onPlaybackToggleRequested();
+
+        repaint();
+        return;
+    }
+
+    if (const auto hit = hitTestStemToggle(event.position))
+    {
+        selectedDeck = hit->deckId;
+        selectedBlockIndex.reset();
+        activeDrag.reset();
+        activeTrackDrag.reset();
+
+        if (hit->deckIndex < state.decks.size())
+        {
+            auto& deck = state.decks[hit->deckIndex];
+            const auto enabled = ! model::isStemEnabled(deck.stemEnabled, hit->stemType);
+            model::setStemEnabled(deck.stemEnabled, hit->stemType, enabled);
+
+            if (onStemToggleRequested)
+                onStemToggleRequested(hit->deckId, hit->stemType, enabled);
+        }
 
         repaint();
         return;
@@ -387,6 +435,20 @@ juce::Rectangle<float> PhraseWorkspace::getDeckLabelBounds(std::size_t deckIndex
     const auto lane = getLaneBounds(deckIndex);
 
     return { labelArea.getX(), lane.getY(), labelArea.getWidth() - 10.0f, lane.getHeight() };
+}
+
+juce::Rectangle<float> PhraseWorkspace::getStemToggleBounds(std::size_t deckIndex, model::StemType stemType) const
+{
+    auto bounds = getDeckLabelBounds(deckIndex).reduced(14.0f, 12.0f);
+    const auto buttonWidth = 54.0f;
+    const auto buttonHeight = 30.0f;
+    const auto gap = 8.0f;
+    const auto index = stemToggleIndex(stemType);
+
+    return { bounds.getX() + (static_cast<float>(index) * (buttonWidth + gap)),
+        bounds.getBottom() - buttonHeight,
+        buttonWidth,
+        buttonHeight };
 }
 
 juce::Rectangle<float> PhraseWorkspace::getLaneBounds(std::size_t deckIndex) const
@@ -656,7 +718,25 @@ void PhraseWorkspace::drawLanes(juce::Graphics& g)
             + (deck.lowCutEnabled ? "   Low cut" : juce::String());
         g.setColour(deck.lowCutEnabled ? juce::Colour(0xff75d1e0) : mutedTextColour().withAlpha(0.72f));
         g.setFont(makeFont(12.0f));
-        g.drawFittedText(stateLine, textBounds.toNearestInt(), juce::Justification::centredLeft, 1);
+        g.drawFittedText(stateLine, textBounds.withTrimmedBottom(38.0f).toNearestInt(), juce::Justification::centredLeft, 1);
+
+        for (const auto stemType : stemToggleOrder)
+        {
+            const auto button = getStemToggleBounds(deckIndex, stemType);
+            const auto stemEnabled = model::isStemEnabled(deck.stemEnabled, stemType);
+            const auto colour = stemColour(stemType);
+
+            g.setColour(stemEnabled ? colour.withAlpha(hasTrack ? 0.90f : 0.54f)
+                                    : juce::Colour(0xff0d1317).withAlpha(0.92f));
+            g.fillRoundedRectangle(button, 6.0f);
+
+            g.setColour(colour.withAlpha(stemEnabled ? 0.90f : 0.42f));
+            g.drawRoundedRectangle(button, 6.0f, stemEnabled ? 1.5f : 1.1f);
+
+            g.setColour(stemEnabled ? juce::Colour(0xff071014) : colour.withAlpha(0.72f));
+            g.setFont(makeFont(13.0f, juce::Font::bold));
+            g.drawFittedText(stemShortLabel(stemType), button.toNearestInt(), juce::Justification::centred, 1);
+        }
     }
 }
 
@@ -750,15 +830,16 @@ void PhraseWorkspace::drawStemWaveforms(juce::Graphics& g, const model::DeckTime
         ++rowIndex;
 
         const auto colour = stemColour(stemType);
+        const auto stemEnabled = model::isStemEnabled(deck.stemEnabled, stemType);
         g.setColour(juce::Colour(0xff0c161b).withAlpha(0.62f));
         g.fillRoundedRectangle(row, 4.0f);
-        g.setColour(colour.withAlpha(0.28f));
+        g.setColour(colour.withAlpha(stemEnabled ? 0.28f : 0.12f));
         g.drawRoundedRectangle(row, 4.0f, 0.8f);
 
         const auto labelBounds = juce::Rectangle<float>(row.getX() + 6.0f, row.getY() + 4.0f, 54.0f, 17.0f);
         g.setColour(juce::Colour(0xff0a1014).withAlpha(0.80f));
         g.fillRoundedRectangle(labelBounds, 4.0f);
-        g.setColour(colour);
+        g.setColour(colour.withAlpha(stemEnabled ? 1.0f : 0.45f));
         g.setFont(makeFont(11.5f, juce::Font::bold));
         g.drawFittedText(asJuceString(model::toString(stemType)), labelBounds.reduced(6.0f, 0.0f).toNearestInt(),
             juce::Justification::centredLeft, 1);
@@ -844,9 +925,9 @@ void PhraseWorkspace::drawStemWaveforms(juce::Graphics& g, const model::DeckTime
 
         waveformPath.closeSubPath();
 
-        g.setColour(colour.withAlpha(0.38f));
+        g.setColour(colour.withAlpha(stemEnabled ? 0.38f : 0.11f));
         g.fillPath(waveformPath);
-        g.setColour(colour.withAlpha(0.88f));
+        g.setColour(colour.withAlpha(stemEnabled ? 0.88f : 0.28f));
         g.strokePath(waveformPath, juce::PathStrokeType(0.75f));
     }
 }
@@ -1056,6 +1137,19 @@ std::optional<PhraseWorkspace::HitTrack> PhraseWorkspace::hitTestLoadedTrack(juc
         const auto& deck = state.decks[deckIndex];
         if (deck.loadedTrack.has_value() && getLoadedTrackTitleBounds(deckIndex).contains(position))
             return HitTrack { deckIndex, deck.id };
+    }
+
+    return std::nullopt;
+}
+
+std::optional<PhraseWorkspace::HitStemToggle> PhraseWorkspace::hitTestStemToggle(juce::Point<float> position) const
+{
+    for (std::size_t deckIndex = 0; deckIndex < state.decks.size(); ++deckIndex)
+    {
+        const auto& deck = state.decks[deckIndex];
+        for (const auto stemType : stemToggleOrder)
+            if (getStemToggleBounds(deckIndex, stemType).contains(position))
+                return HitStemToggle { deckIndex, deck.id, stemType };
     }
 
     return std::nullopt;

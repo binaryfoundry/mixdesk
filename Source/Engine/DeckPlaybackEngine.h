@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Model/PhraseModel.h"
+
 #include <juce_audio_utils/juce_audio_utils.h>
 
 namespace mixdesk::engine
@@ -20,6 +22,7 @@ public:
     void togglePlayback();
     void configureGridPlayback(double secondsPerBar, double firstBeatOffsetSeconds, int launchOffsetBars);
     void setLaunchOffsetBars(int launchOffsetBars);
+    void setStemEnabled(model::StemType stemType, bool enabled);
 
     [[nodiscard]] bool isPlaying() const;
     [[nodiscard]] double getCurrentPositionSeconds() const;
@@ -52,6 +55,7 @@ private:
     double firstBeatOffsetSeconds {};
     double lengthSeconds {};
     int launchOffsetBars {};
+    model::StemEnableState stemEnabled;
     bool playing {};
     bool loaded {};
 };

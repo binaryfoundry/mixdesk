@@ -44,6 +44,13 @@ enum class StemType
     Vocal
 };
 
+struct StemEnableState
+{
+    bool drums { true };
+    bool bass { true };
+    bool vocal { true };
+};
+
 struct PhraseBlock
 {
     PhraseType type { PhraseType::Intro };
@@ -95,6 +102,7 @@ struct DeckTimeline
     std::optional<LoadedTrack> loadedTrack;
     std::optional<BeatGrid> beatGrid;
     std::vector<StemWaveform> stemWaveforms;
+    StemEnableState stemEnabled;
     int launchOffsetBars { 0 };
     float volume { 1.0f };
     bool lowCutEnabled { false };
@@ -115,6 +123,8 @@ std::string_view toString(DeckRole role) noexcept;
 std::string_view toString(PhraseType type) noexcept;
 std::string_view toString(StemType type) noexcept;
 
+bool isStemEnabled(const StemEnableState& stemState, StemType stemType) noexcept;
+void setStemEnabled(StemEnableState& stemState, StemType stemType, bool enabled) noexcept;
 DeckRole nextRole(DeckRole role) noexcept;
 
 DeckTimeline* findDeck(WorkspaceState& state, DeckId deckId) noexcept;
