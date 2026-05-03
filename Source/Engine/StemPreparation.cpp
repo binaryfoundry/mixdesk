@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <initializer_list>
+#include <future>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -65,6 +66,22 @@ juce::String stemName(const StemAudioBuffer& stem)
 void nameStem(StemAudioBuffer& stem, juce::String name)
 {
     stem.debugName = std::move(name);
+}
+
+std::future<std::optional<StemAudioBuffer>> startStemDecode(bool shouldDecode,
+    juce::File file,
+    model::StemType stemType)
+{
+    return std::async(std::launch::async,
+        [shouldDecode, file = std::move(file), stemType]() -> std::optional<StemAudioBuffer>
+        {
+            if (! shouldDecode)
+                return std::nullopt;
+
+            juce::AudioFormatManager workerFormatManager;
+            workerFormatManager.registerBasicFormats();
+            return readStemAudioFile(workerFormatManager, file, stemType);
+        });
 }
 
 float sampleAtIndex(const StemAudioBuffer& stem, int channel, int sampleIndex) noexcept
@@ -818,11 +835,21 @@ PreparedStemSetResult StemPreparation::loadPreparedStemSet(const juce::File& ful
 {
     PreparedStemSetResult result;
 
-    if (sourceLooksIndependent(fullMixFile, { noVocalsFile, drumStemFile, bassStemFile, vocalStemFile, noBassFile, noDrumFile }))
-        if (auto audio = readStemAudioFile(formatManager, fullMixFile, model::StemType::FullMix))
-            result.stems.fullMix = std::move(*audio);
+    const auto shouldLoadFullMix = sourceLooksIndependent(fullMixFile,
+        { noVocalsFile, drumStemFile, bassStemFile, vocalStemFile, noBassFile, noDrumFile });
 
-    if (auto audio = readStemAudioFile(formatManager, noVocalsFile, model::StemType::InstrumentalOriginal))
+    auto fullMixFuture = startStemDecode(shouldLoadFullMix, fullMixFile, model::StemType::FullMix);
+    auto noVocalsFuture = startStemDecode(noVocalsFile.existsAsFile(), noVocalsFile, model::StemType::InstrumentalOriginal);
+    auto noBassFuture = startStemDecode(noBassFile.existsAsFile(), noBassFile, model::StemType::InstrumentalOriginal);
+    auto noDrumFuture = startStemDecode(noDrumFile.existsAsFile(), noDrumFile, model::StemType::InstrumentalOriginal);
+    auto drumsFuture = startStemDecode(drumStemFile.existsAsFile(), drumStemFile, model::StemType::Drums);
+    auto bassFuture = startStemDecode(bassStemFile.existsAsFile(), bassStemFile, model::StemType::Bass);
+    auto vocalsFuture = startStemDecode(vocalStemFile.existsAsFile(), vocalStemFile, model::StemType::Vocals);
+
+    if (auto audio = fullMixFuture.get())
+        result.stems.fullMix = std::move(*audio);
+
+    if (auto audio = noVocalsFuture.get())
     {
         nameStem(*audio, "NoVocals");
         result.stems.noVocals = std::move(*audio);
@@ -830,31 +857,31 @@ PreparedStemSetResult StemPreparation::loadPreparedStemSet(const juce::File& ful
         result.stems.instrumentalOriginal.debugName = "InstrumentalOriginal/NoVocals";
     }
 
-    if (auto audio = readStemAudioFile(formatManager, noBassFile, model::StemType::InstrumentalOriginal))
+    if (auto audio = noBassFuture.get())
     {
         nameStem(*audio, "NoBass");
         result.stems.noBass = std::move(*audio);
     }
 
-    if (auto audio = readStemAudioFile(formatManager, noDrumFile, model::StemType::InstrumentalOriginal))
+    if (auto audio = noDrumFuture.get())
     {
         nameStem(*audio, "NoDrums");
         result.stems.noDrums = std::move(*audio);
     }
 
-    if (auto audio = readStemAudioFile(formatManager, drumStemFile, model::StemType::Drums))
+    if (auto audio = drumsFuture.get())
     {
         nameStem(*audio, "DrumsDirect");
         result.stems.drumsDirect = std::move(*audio);
     }
 
-    if (auto audio = readStemAudioFile(formatManager, bassStemFile, model::StemType::Bass))
+    if (auto audio = bassFuture.get())
     {
         nameStem(*audio, "BassDirect");
         result.stems.bassDirect = std::move(*audio);
     }
 
-    if (auto audio = readStemAudioFile(formatManager, vocalStemFile, model::StemType::Vocals))
+    if (auto audio = vocalsFuture.get())
     {
         nameStem(*audio, "VocalsDirect");
         result.stems.vocalsDirect = std::move(*audio);

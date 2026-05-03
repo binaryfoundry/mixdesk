@@ -8,7 +8,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <future>
 #include <memory>
+#include <optional>
 #include <thread>
 #include <vector>
 
@@ -50,29 +52,35 @@ std::size_t deckSlot(model::DeckId deckId)
     return model::deckIndex(deckId);
 }
 
-void addPreparedStemWaveforms(engine::WaveformAnalyzer& waveformAnalyzer,
-    const engine::PreparedStemSet& stems,
+using OptionalStemWaveform = std::optional<model::StemWaveform>;
+
+std::future<OptionalStemWaveform> startPreparedStemWaveformJob(const engine::StemAudioBuffer& stem,
+    model::StemType stemType)
+{
+    return std::async(std::launch::async,
+        [&stem, stemType]() -> OptionalStemWaveform
+        {
+            if (! stem.hasAudio())
+                return std::nullopt;
+
+            engine::WaveformAnalyzer waveformAnalyzer;
+            return waveformAnalyzer.analyzeBuffer(stem.audio, stem.sampleRate, stemType);
+        });
+}
+
+void addPreparedStemWaveforms(const engine::PreparedStemSet& stems,
     std::vector<model::StemWaveform>& stemWaveforms)
 {
-    if (stems.drums.hasAudio())
-        stemWaveforms.push_back(waveformAnalyzer.analyzeBuffer(stems.drums.audio,
-            stems.drums.sampleRate,
-            model::StemType::Drums));
+    auto drumsWaveform = startPreparedStemWaveformJob(stems.drums, model::StemType::Drums);
+    auto bassWaveform = startPreparedStemWaveformJob(stems.bass, model::StemType::Bass);
+    auto musicWaveform = startPreparedStemWaveformJob(stems.musicResidual, model::StemType::MusicResidual);
+    auto vocalsWaveform = startPreparedStemWaveformJob(stems.vocals, model::StemType::Vocals);
 
-    if (stems.bass.hasAudio())
-        stemWaveforms.push_back(waveformAnalyzer.analyzeBuffer(stems.bass.audio,
-            stems.bass.sampleRate,
-            model::StemType::Bass));
-
-    if (stems.musicResidual.hasAudio())
-        stemWaveforms.push_back(waveformAnalyzer.analyzeBuffer(stems.musicResidual.audio,
-            stems.musicResidual.sampleRate,
-            model::StemType::MusicResidual));
-
-    if (stems.vocals.hasAudio())
-        stemWaveforms.push_back(waveformAnalyzer.analyzeBuffer(stems.vocals.audio,
-            stems.vocals.sampleRate,
-            model::StemType::Vocals));
+    for (auto* waveformFuture : { &drumsWaveform, &bassWaveform, &musicWaveform, &vocalsWaveform })
+    {
+        if (auto waveform = waveformFuture->get())
+            stemWaveforms.push_back(std::move(*waveform));
+    }
 }
 }
 
@@ -210,7 +218,7 @@ std::shared_ptr<TrackLoadResult> loadTrackForDeck(int requestId,
 
     if (result->hasPreparedAudio)
     {
-        addPreparedStemWaveforms(waveformAnalyzer, preparedStemSet.stems, result->stemWaveforms);
+        addPreparedStemWaveforms(preparedStemSet.stems, result->stemWaveforms);
     }
     else
     {
