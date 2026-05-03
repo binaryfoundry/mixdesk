@@ -39,6 +39,8 @@ private:
     void configureDeckGridPlayback(model::DeckId deckId);
     void setTransportGridBarPosition(double gridBarPosition);
     void updateTransportTempoFromSnapshot();
+    void captureSpectrum(const juce::AudioSourceChannelInfo& bufferToFill) noexcept;
+    [[nodiscard]] ui::PhraseWorkspace::SpectrumLevels createSpectrumSnapshot() const noexcept;
     void updateDeckPlayingState();
     void syncStemControlsToPlayback();
     [[nodiscard]] engine::DeckPlaybackEngine& playbackEngineFor(model::DeckId deckId) noexcept;
@@ -51,6 +53,7 @@ private:
     std::unique_ptr<ui::PhraseWorkspace> phraseWorkspace;
     std::array<std::optional<model::BeatGrid>, 3> deckBeatGrids;
     std::array<int, 3> deckLaunchOffsetBars {};
+    std::array<std::atomic<float>, ui::PhraseWorkspace::spectrumBandCount> spectrumLevels;
     std::atomic<int> nextTrackLoadRequestId { 1 };
     std::atomic<double> audioSampleRate {};
     std::atomic<double> transportSecondsPerBar {};

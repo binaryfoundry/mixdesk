@@ -18,6 +18,11 @@ namespace mixdesk::app
 {
 namespace
 {
+constexpr auto spectrumLowFrequencyHz = 30.0;
+constexpr auto spectrumHighFrequencyHz = 18000.0;
+constexpr auto spectrumFloorDb = -62.0;
+constexpr auto spectrumCeilingDb = -8.0;
+
 std::vector<double> makeFallbackBeatTimes(double durationSeconds, double secondsPerBeat)
 {
     std::vector<double> beatTimes;
@@ -45,6 +50,17 @@ double secondsPerBarFor(double bpm, int beatsPerBar)
         return 0.0;
 
     return (60.0 / bpm) * static_cast<double>(std::max(1, beatsPerBar));
+}
+
+double spectrumBandFrequency(std::size_t bandIndex, std::size_t bandCount, double sampleRate)
+{
+    if (bandCount <= 1 || sampleRate <= 0.0)
+        return spectrumLowFrequencyHz;
+
+    const auto nyquist = sampleRate * 0.5;
+    const auto highFrequency = std::clamp(spectrumHighFrequencyHz, spectrumLowFrequencyHz + 1.0, std::max(spectrumLowFrequencyHz + 1.0, nyquist - 100.0));
+    const auto normalized = static_cast<double>(bandIndex) / static_cast<double>(bandCount - 1);
+    return spectrumLowFrequencyHz * std::pow(highFrequency / spectrumLowFrequencyHz, normalized);
 }
 
 std::size_t deckSlot(model::DeckId deckId)
@@ -256,6 +272,9 @@ std::shared_ptr<TrackLoadResult> loadTrackForDeck(int requestId,
 MainComponent::MainComponent()
     : workspaceController(model::createDemoWorkspaceState())
 {
+    for (auto& level : spectrumLevels)
+        level.store(0.0f);
+
     phraseWorkspace = std::make_unique<ui::PhraseWorkspace>();
     addAndMakeVisible(*phraseWorkspace);
 
@@ -328,6 +347,13 @@ MainComponent::MainComponent()
         refreshWorkspaceSnapshot();
     };
 
+    phraseWorkspace->onTransportSeekRequested = [this](double barPosition)
+    {
+        setTransportGridBarPosition(barPosition);
+        workspaceController.dispatch(engine::SetCurrentBarPositionCommand { transportGridBarPosition.load() });
+        refreshWorkspaceSnapshot();
+    };
+
     phraseWorkspace->onTrackLoadRequested = [this](model::DeckId deckId, int launchOffsetBars)
     {
         showTrackSelectionDialog(deckId, launchOffsetBars);
@@ -373,6 +399,8 @@ void MainComponent::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffer
     for (auto& playbackEngine : deckPlaybackEngines)
         playbackEngine.addNextAudioBlockAtGrid(bufferToFill, blockStartBar);
 
+    captureSpectrum(bufferToFill);
+
     const auto sampleRate = audioSampleRate.load();
     const auto secondsPerBar = transportSecondsPerBar.load();
     if (transportRunning && sampleRate > 0.0 && secondsPerBar > 0.0)
@@ -385,6 +413,8 @@ void MainComponent::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffer
 void MainComponent::releaseResources()
 {
     audioSampleRate.store(0.0);
+    for (auto& level : spectrumLevels)
+        level.store(0.0f);
 
     for (auto& playbackEngine : deckPlaybackEngines)
         playbackEngine.releaseResources();
@@ -601,6 +631,63 @@ void MainComponent::updateTransportTempoFromSnapshot()
         deckPlaybackEngines[slot].setGlobalBpm(snapshot.bpm, snapshot.beatsPerBar);
 }
 
+void MainComponent::captureSpectrum(const juce::AudioSourceChannelInfo& bufferToFill) noexcept
+{
+    if (bufferToFill.buffer == nullptr || bufferToFill.numSamples <= 0)
+        return;
+
+    const auto sampleRate = audioSampleRate.load();
+    if (sampleRate <= 0.0)
+        return;
+
+    const auto& buffer = *bufferToFill.buffer;
+    const auto channelCount = std::min(2, buffer.getNumChannels());
+    if (channelCount <= 0)
+        return;
+
+    const auto startSample = bufferToFill.startSample;
+    const auto endSample = startSample + bufferToFill.numSamples;
+
+    for (std::size_t bandIndex = 0; bandIndex < spectrumLevels.size(); ++bandIndex)
+    {
+        const auto frequency = spectrumBandFrequency(bandIndex, spectrumLevels.size(), sampleRate);
+        const auto coefficient = 2.0 * std::cos(juce::MathConstants<double>::twoPi * frequency / sampleRate);
+        auto q1 = 0.0;
+        auto q2 = 0.0;
+
+        for (auto sample = startSample; sample < endSample; ++sample)
+        {
+            auto mono = 0.0;
+            for (auto channel = 0; channel < channelCount; ++channel)
+                mono += static_cast<double>(buffer.getSample(channel, sample));
+
+            mono /= static_cast<double>(channelCount);
+            const auto q0 = mono + (coefficient * q1) - q2;
+            q2 = q1;
+            q1 = q0;
+        }
+
+        const auto power = std::max(0.0, (q1 * q1) + (q2 * q2) - (coefficient * q1 * q2));
+        const auto magnitude = std::sqrt(power) / static_cast<double>(bufferToFill.numSamples);
+        const auto db = juce::Decibels::gainToDecibels(static_cast<float>(magnitude), static_cast<float>(spectrumFloorDb));
+        const auto normalized = std::clamp((static_cast<double>(db) - spectrumFloorDb) / (spectrumCeilingDb - spectrumFloorDb), 0.0, 1.0);
+        const auto shaped = static_cast<float>(std::sqrt(normalized));
+        const auto previous = spectrumLevels[bandIndex].load();
+        const auto smoothing = shaped > previous ? 0.38f : 0.12f;
+        spectrumLevels[bandIndex].store((previous * (1.0f - smoothing)) + (shaped * smoothing));
+    }
+}
+
+ui::PhraseWorkspace::SpectrumLevels MainComponent::createSpectrumSnapshot() const noexcept
+{
+    ui::PhraseWorkspace::SpectrumLevels snapshot {};
+
+    for (std::size_t bandIndex = 0; bandIndex < snapshot.size(); ++bandIndex)
+        snapshot[bandIndex] = spectrumLevels[bandIndex].load();
+
+    return snapshot;
+}
+
 void MainComponent::updateDeckPlayingState()
 {
     for (const auto deckId : { model::DeckId::A, model::DeckId::B, model::DeckId::C })
@@ -639,5 +726,6 @@ const engine::DeckPlaybackEngine& MainComponent::playbackEngineFor(model::DeckId
 void MainComponent::refreshWorkspaceSnapshot()
 {
     phraseWorkspace->setStateSnapshot(workspaceController.createSnapshot());
+    phraseWorkspace->setSpectrumLevels(createSpectrumSnapshot());
 }
 } // namespace mixdesk::app

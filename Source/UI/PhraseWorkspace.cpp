@@ -145,6 +145,20 @@ juce::String formatDuration(double durationSeconds)
     return juce::String(minutes) + ":" + juce::String(seconds).paddedLeft('0', 2);
 }
 
+juce::String spectrumFrequencyLabel(std::size_t bandIndex, std::size_t bandCount)
+{
+    if (bandCount <= 1)
+        return "20";
+
+    const auto normalized = static_cast<double>(bandIndex) / static_cast<double>(bandCount - 1);
+    const auto frequency = 30.0 * std::pow(18000.0 / 30.0, normalized);
+
+    if (frequency >= 1000.0)
+        return juce::String(frequency / 1000.0, frequency >= 10000.0 ? 0 : 1) + "k";
+
+    return juce::String(static_cast<int>(std::round(frequency)));
+}
+
 juce::String trackBpmText(const model::DeckTimeline& deck, double fallbackBpm)
 {
     if (deck.beatGrid.has_value() && deck.beatGrid->bpm > 0)
@@ -210,6 +224,12 @@ void PhraseWorkspace::setStateSnapshot(model::WorkspaceState newState)
     repaint();
 }
 
+void PhraseWorkspace::setSpectrumLevels(SpectrumLevels newSpectrumLevels)
+{
+    spectrumLevels = newSpectrumLevels;
+    repaint(getSpectrumBounds().toNearestInt());
+}
+
 void PhraseWorkspace::showPendingTrackLoadMarker(model::DeckId deckId, int launchOffsetBars)
 {
     pendingTrackLoadMarker = PendingTrackLoadMarker { deckId, launchOffsetBars };
@@ -226,6 +246,7 @@ void PhraseWorkspace::paint(juce::Graphics& g)
 {
     g.fillAll(backgroundColour());
     drawHeader(g);
+    drawControlRail(g);
     drawGrid(g);
     drawLanes(g);
     drawLoadedTrackBeds(g);
@@ -256,6 +277,7 @@ void PhraseWorkspace::mouseDown(const juce::MouseEvent& event)
             activeStemVolumeDrag.reset();
             activeBpmDragSource.reset();
             activeVolumeDragSource.reset();
+            activeMiniMapDragSource.reset();
 
             const auto launchOffsetBars = snapStartBar(barForX(event.position.x));
             if (onTrackLoadRequested)
@@ -272,6 +294,7 @@ void PhraseWorkspace::mouseDown(const juce::MouseEvent& event)
         activeDrag.reset();
         activeTrackDrag.reset();
         activeStemVolumeDrag.reset();
+        activeMiniMapDragSource.reset();
 
         if (onPlaybackToggleRequested)
             onPlaybackToggleRequested();
@@ -286,6 +309,7 @@ void PhraseWorkspace::mouseDown(const juce::MouseEvent& event)
         activeDrag.reset();
         activeTrackDrag.reset();
         activeStemVolumeDrag.reset();
+        activeMiniMapDragSource.reset();
         activeVolumeDragSource = sourceIndex;
         setMasterVolumeFromPoint(event.position);
         repaint();
@@ -298,8 +322,23 @@ void PhraseWorkspace::mouseDown(const juce::MouseEvent& event)
         activeDrag.reset();
         activeTrackDrag.reset();
         activeStemVolumeDrag.reset();
+        activeMiniMapDragSource.reset();
         activeBpmDragSource = sourceIndex;
         setBpmFromPoint(event.position);
+        repaint();
+        return;
+    }
+
+    if (getMiniMapBounds().contains(event.position))
+    {
+        selectedBlockIndex.reset();
+        activeDrag.reset();
+        activeTrackDrag.reset();
+        activeStemVolumeDrag.reset();
+        activeBpmDragSource.reset();
+        activeVolumeDragSource.reset();
+        activeMiniMapDragSource = sourceIndex;
+        setTransportFromMiniMapPoint(event.position);
         repaint();
         return;
     }
@@ -310,6 +349,7 @@ void PhraseWorkspace::mouseDown(const juce::MouseEvent& event)
         selectedBlockIndex.reset();
         activeDrag.reset();
         activeTrackDrag.reset();
+        activeMiniMapDragSource.reset();
         activeStemVolumeDrag = ActiveStemVolumeDrag { sourceIndex, hit->deckIndex, hit->deckId, hit->stemType };
         setStemVolumeFromPoint(hit->deckIndex, hit->deckId, hit->stemType, event.position);
         repaint();
@@ -323,6 +363,7 @@ void PhraseWorkspace::mouseDown(const juce::MouseEvent& event)
         activeDrag.reset();
         activeTrackDrag.reset();
         activeStemVolumeDrag.reset();
+        activeMiniMapDragSource.reset();
 
         if (hit->deckIndex < state.decks.size())
         {
@@ -344,6 +385,7 @@ void PhraseWorkspace::mouseDown(const juce::MouseEvent& event)
         selectedBlockIndex = hit->blockIndex;
         activeTrackDrag.reset();
         activeStemVolumeDrag.reset();
+        activeMiniMapDragSource.reset();
 
         const auto& block = state.decks[hit->deckIndex].blocks[hit->blockIndex];
         activeDrag = ActiveDrag {
@@ -366,6 +408,7 @@ void PhraseWorkspace::mouseDown(const juce::MouseEvent& event)
         selectedBlockIndex.reset();
         activeDrag.reset();
         activeStemVolumeDrag.reset();
+        activeMiniMapDragSource.reset();
 
         const auto& deck = state.decks[hit->deckIndex];
         activeTrackDrag = ActiveTrackDrag {
@@ -388,6 +431,7 @@ void PhraseWorkspace::mouseDown(const juce::MouseEvent& event)
         activeDrag.reset();
         activeTrackDrag.reset();
         activeStemVolumeDrag.reset();
+        activeMiniMapDragSource.reset();
         repaint();
     }
 }
@@ -455,6 +499,12 @@ void PhraseWorkspace::mouseDrag(const juce::MouseEvent& event)
         repaint();
     }
 
+    if (activeMiniMapDragSource.has_value() && *activeMiniMapDragSource == sourceIndex)
+    {
+        setTransportFromMiniMapPoint(event.position);
+        repaint();
+    }
+
     updatePinchZoomFromPointers();
 }
 
@@ -486,6 +536,9 @@ void PhraseWorkspace::mouseUp(const juce::MouseEvent& event)
 
     if (activeBpmDragSource.has_value() && *activeBpmDragSource == sourceIndex)
         activeBpmDragSource.reset();
+
+    if (activeMiniMapDragSource.has_value() && *activeMiniMapDragSource == sourceIndex)
+        activeMiniMapDragSource.reset();
 
     activePointers.erase(sourceIndex);
 }
@@ -560,6 +613,35 @@ juce::Rectangle<float> PhraseWorkspace::getGridBounds() const
 juce::Rectangle<float> PhraseWorkspace::getControlBounds() const
 {
     return getLocalBounds().removeFromBottom(controlHeight).toFloat();
+}
+
+juce::Rectangle<float> PhraseWorkspace::getMiniMapBounds() const
+{
+    auto controls = getControlBounds().reduced(outerPadding, 12.0f);
+    const auto gap = 16.0f;
+    const auto spectrumWidth = std::clamp(controls.getWidth() * 0.31f, 330.0f, 420.0f);
+    controls.removeFromRight(spectrumWidth + gap);
+    return controls;
+}
+
+juce::Rectangle<float> PhraseWorkspace::getMiniMapPlotBounds() const
+{
+    return getMiniMapBounds().reduced(14.0f, 12.0f).withTrimmedTop(22.0f);
+}
+
+juce::Rectangle<float> PhraseWorkspace::getSpectrumBounds() const
+{
+    auto controls = getControlBounds().reduced(outerPadding, 12.0f);
+    const auto spectrumWidth = std::clamp(controls.getWidth() * 0.31f, 330.0f, 420.0f);
+    return controls.removeFromRight(spectrumWidth);
+}
+
+juce::Rectangle<float> PhraseWorkspace::getSpectrumPlotBounds() const
+{
+    auto bounds = getSpectrumBounds().reduced(14.0f, 10.0f);
+    bounds.removeFromTop(22.0f);
+    bounds.removeFromBottom(18.0f);
+    return bounds;
 }
 
 juce::Rectangle<float> PhraseWorkspace::getDeckLabelBounds(std::size_t deckIndex) const
@@ -703,6 +785,58 @@ double PhraseWorkspace::visibleEndBar() const
 {
     const auto grid = getGridBounds();
     return viewStartBar + (static_cast<double>(grid.getWidth()) / static_cast<double>(pixelsPerBar));
+}
+
+double PhraseWorkspace::overviewStartBar() const
+{
+    auto start = std::min(0.0, std::min(viewStartBar, state.currentBarPosition));
+
+    for (const auto& deck : state.decks)
+    {
+        if (deck.loadedTrack.has_value())
+            start = std::min(start, getTrackStartBar(deck));
+
+        for (const auto& block : deck.blocks)
+            start = std::min(start, effectiveStartBar(deck, block));
+    }
+
+    return std::floor(start / 8.0) * 8.0;
+}
+
+double PhraseWorkspace::overviewEndBar() const
+{
+    auto end = std::max({ 64.0, visibleEndBar(), state.currentBarPosition + 8.0 });
+
+    for (const auto& deck : state.decks)
+    {
+        if (deck.loadedTrack.has_value())
+            end = std::max(end, getTrackStartBar(deck) + getTrackLengthBars(deck));
+
+        for (const auto& block : deck.blocks)
+            end = std::max(end, effectiveEndBar(deck, block));
+    }
+
+    return std::max(overviewStartBar() + 32.0, std::ceil(end / 8.0) * 8.0);
+}
+
+float PhraseWorkspace::miniMapXForBar(double bar) const
+{
+    const auto plot = getMiniMapPlotBounds();
+    const auto start = overviewStartBar();
+    const auto end = overviewEndBar();
+    const auto range = std::max(1.0, end - start);
+    const auto normalized = std::clamp((bar - start) / range, 0.0, 1.0);
+    return plot.getX() + (static_cast<float>(normalized) * plot.getWidth());
+}
+
+double PhraseWorkspace::miniMapBarForX(float x) const
+{
+    const auto plot = getMiniMapPlotBounds();
+    const auto start = overviewStartBar();
+    const auto end = overviewEndBar();
+    const auto range = std::max(1.0, end - start);
+    const auto normalized = plot.getWidth() > 0.0f ? std::clamp((x - plot.getX()) / plot.getWidth(), 0.0f, 1.0f) : 0.0f;
+    return start + (static_cast<double>(normalized) * range);
 }
 
 void PhraseWorkspace::drawHeader(juce::Graphics& g)
@@ -1356,6 +1490,189 @@ void PhraseWorkspace::drawControlRail(juce::Graphics& g)
 
     g.setColour(juce::Colour(0xff2a333b));
     g.drawLine(controls.getX(), controls.getY(), controls.getRight(), controls.getY(), 1.0f);
+
+    drawMiniMap(g);
+    drawSpectrumAnalyzer(g);
+}
+
+void PhraseWorkspace::drawMiniMap(juce::Graphics& g)
+{
+    const auto bounds = getMiniMapBounds();
+    const auto plot = getMiniMapPlotBounds();
+    const auto startBar = overviewStartBar();
+    const auto endBar = overviewEndBar();
+
+    g.setColour(juce::Colour(0xff101820));
+    g.fillRoundedRectangle(bounds, 8.0f);
+    g.setColour(juce::Colour(0xff2a333b));
+    g.drawRoundedRectangle(bounds, 8.0f, 1.0f);
+
+    g.setColour(textColour());
+    g.setFont(makeFont(12.5f, juce::Font::bold));
+    g.drawFittedText("MAP", bounds.reduced(14.0f, 7.0f).removeFromTop(17.0f).toNearestInt(),
+        juce::Justification::centredLeft, 1);
+
+    g.saveState();
+    g.reduceClipRegion(plot.toNearestInt());
+
+    g.setColour(juce::Colour(0xff0b1116));
+    g.fillRoundedRectangle(plot, 5.0f);
+
+    const auto phraseInterval = std::max(1, state.barsPerPhrase);
+    const auto firstPhrase = static_cast<int>(std::floor(startBar / static_cast<double>(phraseInterval))) * phraseInterval;
+    for (auto bar = firstPhrase; bar <= static_cast<int>(std::ceil(endBar)); bar += phraseInterval)
+    {
+        const auto x = miniMapXForBar(static_cast<double>(bar));
+        g.setColour(isMultipleOf(bar, phraseInterval * 2) ? phraseBoundaryColour().withAlpha(0.30f)
+                                                          : strongGridLineColour().withAlpha(0.22f));
+        g.drawLine(x, plot.getY(), x, plot.getBottom(), isMultipleOf(bar, phraseInterval * 2) ? 1.1f : 0.8f);
+    }
+
+    const auto laneCount = std::max<std::size_t>(1, state.decks.size());
+    const auto laneGapSmall = 5.0f;
+    const auto rowHeight = (plot.getHeight() - (laneGapSmall * static_cast<float>(laneCount - 1)))
+        / static_cast<float>(laneCount);
+
+    for (std::size_t deckIndex = 0; deckIndex < state.decks.size(); ++deckIndex)
+    {
+        const auto& deck = state.decks[deckIndex];
+        auto row = juce::Rectangle<float>(plot.getX(),
+            plot.getY() + (static_cast<float>(deckIndex) * (rowHeight + laneGapSmall)),
+            plot.getWidth(),
+            rowHeight);
+
+        g.setColour(deck.id == selectedDeck ? laneSelectedColour().withAlpha(0.80f) : laneColour().withAlpha(0.78f));
+        g.fillRoundedRectangle(row, 4.0f);
+
+        if (deck.loadedTrack.has_value())
+        {
+            const auto trackStart = getTrackStartBar(deck);
+            const auto trackEnd = trackStart + getTrackLengthBars(deck);
+            auto track = juce::Rectangle<float>(miniMapXForBar(trackStart),
+                row.getY() + 3.0f,
+                miniMapXForBar(trackEnd) - miniMapXForBar(trackStart),
+                row.getHeight() - 6.0f);
+            track = track.getIntersection(row.reduced(1.0f, 2.0f));
+
+            g.setColour(juce::Colour(0xff17313a));
+            g.fillRoundedRectangle(track, 3.0f);
+
+            constexpr std::array miniStems { model::StemType::Drums, model::StemType::Bass, model::StemType::MusicResidual, model::StemType::Vocals };
+            const auto stripeHeight = track.getHeight() / static_cast<float>(miniStems.size());
+            for (std::size_t stemIndex = 0; stemIndex < miniStems.size(); ++stemIndex)
+            {
+                const auto stemType = miniStems[stemIndex];
+                const auto stemEnabled = model::isStemEnabled(deck.stemEnabled, stemType);
+                const auto stemLevel = model::stemVolume(deck.stemEnabled, stemType);
+                const auto stripe = juce::Rectangle<float>(track.getX(),
+                    track.getY() + (static_cast<float>(stemIndex) * stripeHeight),
+                    track.getWidth(),
+                    std::max(1.0f, stripeHeight - 1.0f));
+
+                g.setColour(stemColour(stemType).withAlpha(stemEnabled ? 0.18f + (0.34f * stemLevel) : 0.05f));
+                g.fillRect(stripe);
+            }
+
+            for (const auto& block : deck.blocks)
+            {
+                const auto markerBar = effectiveStartBar(deck, block);
+                if (markerBar < startBar || markerBar > endBar)
+                    continue;
+
+                const auto x = miniMapXForBar(markerBar);
+                g.setColour(phraseColour(block.type).withAlpha(0.78f));
+                g.drawLine(x, track.getY(), x, track.getBottom(), 1.3f);
+            }
+        }
+    }
+
+    const auto visibleLeft = miniMapXForBar(viewStartBar);
+    const auto visibleRight = miniMapXForBar(visibleEndBar());
+    const auto visible = juce::Rectangle<float>(visibleLeft, plot.getY(), visibleRight - visibleLeft, plot.getHeight());
+    g.setColour(juce::Colour(0xffd6eef5).withAlpha(0.10f));
+    g.fillRect(visible);
+    g.setColour(juce::Colour(0xffd6eef5).withAlpha(0.48f));
+    g.drawRect(visible, 1.0f);
+
+    const auto playheadX = miniMapXForBar(state.currentBarPosition);
+    g.setColour(juce::Colour(0xfffff4a3).withAlpha(0.22f));
+    g.fillRect(juce::Rectangle<float>(playheadX - 4.0f, plot.getY(), 8.0f, plot.getHeight()));
+    g.setColour(juce::Colour(0xfffff4a3));
+    g.drawLine(playheadX, plot.getY(), playheadX, plot.getBottom(), 2.0f);
+
+    g.restoreState();
+
+    g.setColour(mutedTextColour());
+    g.setFont(makeFont(11.0f, juce::Font::bold));
+    const auto label = juce::String(static_cast<int>(std::round(startBar)))
+        + " - " + juce::String(static_cast<int>(std::round(endBar)))
+        + " bars";
+    g.drawFittedText(label, bounds.reduced(14.0f, 7.0f).removeFromTop(17.0f).toNearestInt(),
+        juce::Justification::centredRight, 1);
+}
+
+void PhraseWorkspace::drawSpectrumAnalyzer(juce::Graphics& g)
+{
+    const auto bounds = getSpectrumBounds();
+    const auto plot = getSpectrumPlotBounds();
+
+    g.setColour(juce::Colour(0xff101820));
+    g.fillRoundedRectangle(bounds, 8.0f);
+    g.setColour(juce::Colour(0xff2a333b));
+    g.drawRoundedRectangle(bounds, 8.0f, 1.0f);
+
+    g.setColour(textColour());
+    g.setFont(makeFont(12.5f, juce::Font::bold));
+    g.drawFittedText("SPECTRUM", bounds.reduced(14.0f, 7.0f).removeFromTop(17.0f).toNearestInt(),
+        juce::Justification::centredLeft, 1);
+
+    g.setColour(mutedTextColour());
+    g.setFont(makeFont(10.5f, juce::Font::bold));
+    g.drawFittedText("OUT", bounds.reduced(14.0f, 7.0f).removeFromTop(17.0f).toNearestInt(),
+        juce::Justification::centredRight, 1);
+
+    g.setColour(juce::Colour(0xff05090c).withAlpha(0.86f));
+    g.fillRoundedRectangle(plot, 5.0f);
+
+    for (auto line = 1; line < 4; ++line)
+    {
+        const auto y = plot.getY() + (plot.getHeight() * static_cast<float>(line) / 4.0f);
+        g.setColour(juce::Colour(0xffffffff).withAlpha(0.08f));
+        g.drawLine(plot.getX(), y, plot.getRight(), y, 0.8f);
+    }
+
+    if (spectrumLevels.empty())
+        return;
+
+    const auto gap = 2.0f;
+    const auto bandWidth = std::max(2.0f,
+        (plot.getWidth() - (gap * static_cast<float>(spectrumLevels.size() - 1))) / static_cast<float>(spectrumLevels.size()));
+
+    for (std::size_t bandIndex = 0; bandIndex < spectrumLevels.size(); ++bandIndex)
+    {
+        const auto normalized = std::clamp(spectrumLevels[bandIndex], 0.0f, 1.0f);
+        const auto barHeight = std::max(1.5f, plot.getHeight() * normalized);
+        const auto x = plot.getX() + (static_cast<float>(bandIndex) * (bandWidth + gap));
+        const auto bar = juce::Rectangle<float>(x, plot.getBottom() - barHeight, bandWidth, barHeight);
+        const auto bandColour = juce::Colour(0xff35c4ff)
+            .interpolatedWith(juce::Colour(0xffffc247),
+                static_cast<float>(bandIndex) / static_cast<float>(std::max<std::size_t>(1, spectrumLevels.size() - 1)));
+
+        g.setColour(bandColour.withAlpha(0.20f));
+        g.fillRoundedRectangle(juce::Rectangle<float>(bar.getX(), plot.getY(), bar.getWidth(), plot.getHeight()), 2.0f);
+        g.setColour(bandColour.withAlpha(0.86f));
+        g.fillRoundedRectangle(bar, 2.0f);
+    }
+
+    g.setColour(mutedTextColour().withAlpha(0.82f));
+    g.setFont(makeFont(9.5f, juce::Font::bold));
+    auto labelArea = bounds.reduced(14.0f, 8.0f).removeFromBottom(15.0f);
+    g.drawFittedText(spectrumFrequencyLabel(0, spectrumLevels.size()), labelArea.removeFromLeft(54.0f).toNearestInt(),
+        juce::Justification::centredLeft, 1);
+    g.drawFittedText(spectrumFrequencyLabel(spectrumLevels.size() / 2, spectrumLevels.size()), labelArea.toNearestInt(),
+        juce::Justification::centred, 1);
+    g.drawFittedText(spectrumFrequencyLabel(spectrumLevels.size() - 1, spectrumLevels.size()), labelArea.removeFromRight(54.0f).toNearestInt(),
+        juce::Justification::centredRight, 1);
 }
 
 std::optional<PhraseWorkspace::HitBlock> PhraseWorkspace::hitTestBlock(juce::Point<float> position) const
@@ -1601,6 +1918,21 @@ void PhraseWorkspace::setBpmFromPoint(juce::Point<float> position)
 
     if (onBpmChanged)
         onBpmChanged(bpm);
+}
+
+void PhraseWorkspace::setTransportFromMiniMapPoint(juce::Point<float> position)
+{
+    const auto bar = std::max(0.0, miniMapBarForX(position.x));
+    state.currentBarPosition = bar;
+
+    const auto grid = getGridBounds();
+    const auto visibleBars = grid.getWidth() > 0.0f
+        ? static_cast<double>(grid.getWidth()) / static_cast<double>(pixelsPerBar)
+        : 16.0;
+    viewStartBar = std::max(0.0, bar - (visibleBars * 0.5));
+
+    if (onTransportSeekRequested)
+        onTransportSeekRequested(bar);
 }
 
 bool PhraseWorkspace::isWorkspacePlaying() const

@@ -4,6 +4,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include <array>
 #include <functional>
 #include <optional>
 #include <unordered_map>
@@ -22,11 +23,15 @@ public:
     using StemVolumeCallback = std::function<void(model::DeckId, model::StemType, float)>;
     using MasterVolumeCallback = std::function<void(float)>;
     using BpmChangeCallback = std::function<void(double)>;
+    using TransportSeekCallback = std::function<void(double)>;
     using TrackLoadRequestCallback = std::function<void(model::DeckId, int)>;
+    static constexpr std::size_t spectrumBandCount = 32;
+    using SpectrumLevels = std::array<float, spectrumBandCount>;
 
     PhraseWorkspace();
 
     void setStateSnapshot(model::WorkspaceState newState);
+    void setSpectrumLevels(SpectrumLevels newSpectrumLevels);
     void showPendingTrackLoadMarker(model::DeckId deckId, int launchOffsetBars);
     void clearPendingTrackLoadMarker();
 
@@ -48,6 +53,7 @@ public:
     StemVolumeCallback onStemVolumeChanged;
     MasterVolumeCallback onMasterVolumeChanged;
     BpmChangeCallback onBpmChanged;
+    TransportSeekCallback onTransportSeekRequested;
     TrackLoadRequestCallback onTrackLoadRequested;
 
 private:
@@ -141,6 +147,10 @@ private:
     juce::Rectangle<float> getTimelineBounds() const;
     juce::Rectangle<float> getGridBounds() const;
     juce::Rectangle<float> getControlBounds() const;
+    juce::Rectangle<float> getMiniMapBounds() const;
+    juce::Rectangle<float> getMiniMapPlotBounds() const;
+    juce::Rectangle<float> getSpectrumBounds() const;
+    juce::Rectangle<float> getSpectrumPlotBounds() const;
     juce::Rectangle<float> getDeckLabelBounds(std::size_t deckIndex) const;
     juce::Rectangle<float> getStemToggleBounds(std::size_t deckIndex, model::StemType stemType) const;
     juce::Rectangle<float> getStemToggleButtonBounds(std::size_t deckIndex, model::StemType stemType) const;
@@ -157,6 +167,10 @@ private:
     double getTrackStartBar(const model::DeckTimeline& deck) const;
     double getTrackLengthBars(const model::DeckTimeline& deck) const;
     double visibleEndBar() const;
+    double overviewStartBar() const;
+    double overviewEndBar() const;
+    float miniMapXForBar(double bar) const;
+    double miniMapBarForX(float x) const;
 
     void drawHeader(juce::Graphics& g);
     void drawGrid(juce::Graphics& g);
@@ -169,6 +183,8 @@ private:
     void drawPendingTrackLoadMarker(juce::Graphics& g);
     void drawPlayhead(juce::Graphics& g);
     void drawControlRail(juce::Graphics& g);
+    void drawMiniMap(juce::Graphics& g);
+    void drawSpectrumAnalyzer(juce::Graphics& g);
 
     std::optional<HitBlock> hitTestBlock(juce::Point<float> position) const;
     std::optional<HitTrack> hitTestLoadedTrack(juce::Point<float> position) const;
@@ -191,6 +207,7 @@ private:
     void setMasterVolumeFromPoint(juce::Point<float> position);
     double bpmForX(float x) const;
     void setBpmFromPoint(juce::Point<float> position);
+    void setTransportFromMiniMapPoint(juce::Point<float> position);
     bool isWorkspacePlaying() const;
     void zoomAround(float componentX, float scaleFactor);
     void updatePinchZoomFromPointers();
@@ -204,9 +221,11 @@ private:
     std::optional<PendingTrackLoadMarker> pendingTrackLoadMarker;
     std::optional<int> activeBpmDragSource;
     std::optional<int> activeVolumeDragSource;
+    std::optional<int> activeMiniMapDragSource;
     std::unordered_map<int, PointerContact> activePointers;
 
     SnapMode snapMode { SnapMode::Bar };
+    SpectrumLevels spectrumLevels {};
     double viewStartBar { -4.0 };
     float pixelsPerBar { 28.0f };
 
@@ -219,7 +238,7 @@ private:
     static constexpr float minPixelsPerBar = 12.0f;
     static constexpr float maxPixelsPerBar = 72.0f;
     static constexpr int headerHeight = 64;
-    static constexpr int controlHeight = 0;
+    static constexpr int controlHeight = 142;
     static constexpr float outerPadding = 18.0f;
     static constexpr float leftLabelWidth = 270.0f;
 };
