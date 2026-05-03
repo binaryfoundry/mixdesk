@@ -15,7 +15,18 @@ namespace
 constexpr auto maxPrototypeChannels = 2;
 constexpr auto mp3AlignmentSearchSamples = 4096;
 constexpr auto minimumAlignmentConfidence = 0.08;
+constexpr auto fastZeroAlignmentConfidence = 0.90;
+// Candidate quality numbers are debug/import diagnostics, so sampling them keeps
+// track loading responsive while final reconstruction validation remains exact.
+constexpr auto maxMetricComparisons = 262144;
 constexpr auto suspiciousRelativeError = 0.02;
+
+struct AlignmentScore
+{
+    bool valid {};
+    double score {};
+    double signedScore {};
+};
 
 juce::String stringFromView(std::string_view text)
 {
@@ -63,6 +74,52 @@ float sampleAtIndex(const StemAudioBuffer& stem, int channel, int sampleIndex) n
 
     const auto sourceChannel = std::clamp(channel, 0, stem.audio.getNumChannels() - 1);
     return stem.audio.getSample(sourceChannel, sampleIndex);
+}
+
+int metricStrideFor(int sampleCount) noexcept
+{
+    return std::max(1, sampleCount / maxMetricComparisons);
+}
+
+AlignmentScore calculateDifferencedAlignmentScore(const StemAudioBuffer& reference,
+    const StemAudioBuffer& candidate,
+    int offset,
+    int stride)
+{
+    double dot {};
+    double referenceSquared {};
+    double candidateSquared {};
+    auto count = 0;
+
+    for (auto channel = 0; channel < reference.channelCount(); ++channel)
+    {
+        for (auto sample = stride; sample < reference.sampleCount(); sample += stride)
+        {
+            const auto candidateSample = sample + offset;
+            const auto previousCandidateSample = candidateSample - stride;
+            if (candidateSample < 0 || candidateSample >= candidate.sampleCount()
+                || previousCandidateSample < 0 || previousCandidateSample >= candidate.sampleCount())
+            {
+                continue;
+            }
+
+            const auto referenceValue = static_cast<double>(sampleAtIndex(reference, channel, sample)
+                - sampleAtIndex(reference, channel, sample - stride));
+            const auto candidateValue = static_cast<double>(sampleAtIndex(candidate, channel, candidateSample)
+                - sampleAtIndex(candidate, channel, previousCandidateSample));
+
+            dot += referenceValue * candidateValue;
+            referenceSquared += referenceValue * referenceValue;
+            candidateSquared += candidateValue * candidateValue;
+            ++count;
+        }
+    }
+
+    if (count == 0 || referenceSquared <= 0.0 || candidateSquared <= 0.0)
+        return {};
+
+    const auto signedScore = dot / std::sqrt(referenceSquared * candidateSquared);
+    return { true, signedScore, signedScore };
 }
 
 bool samePcmShape(const StemAudioBuffer& reference, const StemAudioBuffer& candidate, juce::String& message)
@@ -229,10 +286,12 @@ StemSignalMetrics calculateSignalMetrics(const StemAudioBuffer& stem)
     double sumSquared {};
     auto count = 0.0;
 
+    const auto stride = metricStrideFor(stem.sampleCount());
+
     for (auto channel = 0; channel < stem.channelCount(); ++channel)
     {
         const auto* samples = stem.audio.getReadPointer(channel);
-        for (auto sample = 0; sample < stem.sampleCount(); ++sample)
+        for (auto sample = 0; sample < stem.sampleCount(); sample += stride)
         {
             const auto value = static_cast<double>(samples[sample]);
             metrics.peakLevel = std::max(metrics.peakLevel, std::abs(value));
@@ -263,9 +322,11 @@ StemErrorMetrics calculateErrorMetrics(const StemAudioBuffer& reference,
     double referenceSquared {};
     auto count = 0.0;
 
+    const auto stride = metricStrideFor(reference.sampleCount());
+
     for (auto channel = 0; channel < reference.channelCount(); ++channel)
     {
-        for (auto sample = 0; sample < reference.sampleCount(); ++sample)
+        for (auto sample = 0; sample < reference.sampleCount(); sample += stride)
         {
             auto reconstructed = 0.0f;
             for (const auto* stem : reconstructionStems)
@@ -296,9 +357,11 @@ double correlationBetween(const StemAudioBuffer& a, const StemAudioBuffer& b)
     double aSquared {};
     double bSquared {};
 
+    const auto stride = metricStrideFor(a.sampleCount());
+
     for (auto channel = 0; channel < a.channelCount(); ++channel)
     {
-        for (auto sample = 0; sample < a.sampleCount(); ++sample)
+        for (auto sample = 0; sample < a.sampleCount(); sample += stride)
         {
             const auto aValue = static_cast<double>(sampleAtIndex(a, channel, sample));
             const auto bValue = static_cast<double>(sampleAtIndex(b, channel, sample));
@@ -878,6 +941,21 @@ StemAlignmentResult alignStemToReference(const StemAudioBuffer& reference,
 
     const auto maxComparisons = 4096;
     const auto stride = std::max(1, reference.sampleCount() / maxComparisons);
+    const auto zeroAlignment = calculateDifferencedAlignmentScore(reference, candidate, 0, stride);
+    if (reference.sampleCount() == candidate.sampleCount()
+        && zeroAlignment.valid
+        && zeroAlignment.score >= fastZeroAlignmentConfidence)
+    {
+        result.offsetSamples = 0;
+        result.confidence = zeroAlignment.score;
+        result.succeeded = true;
+        result.message = stemName(candidate) + " offset 0 samples, confidence "
+            + juce::String(result.confidence, 4)
+            + ", signed correlation " + juce::String(zeroAlignment.signedScore, 4)
+            + " (fast zero-offset alignment)";
+        return result;
+    }
+
     auto bestScore = -1.0;
     auto bestSignedScore = 0.0;
     auto bestOffset = 0;
@@ -886,50 +964,20 @@ StemAlignmentResult alignStemToReference(const StemAudioBuffer& reference,
 
     for (auto offset = -maxOffsetSamples; offset <= maxOffsetSamples; ++offset)
     {
-        double dot {};
-        double referenceSquared {};
-        double candidateSquared {};
-        auto count = 0;
-
-        for (auto channel = 0; channel < reference.channelCount(); ++channel)
-        {
-            for (auto sample = stride; sample < reference.sampleCount(); sample += stride)
-            {
-                const auto candidateSample = sample + offset;
-                const auto previousCandidateSample = candidateSample - stride;
-                if (candidateSample < 0 || candidateSample >= candidate.sampleCount()
-                    || previousCandidateSample < 0 || previousCandidateSample >= candidate.sampleCount())
-                {
-                    continue;
-                }
-
-                const auto referenceValue = static_cast<double>(sampleAtIndex(reference, channel, sample)
-                    - sampleAtIndex(reference, channel, sample - stride));
-                const auto candidateValue = static_cast<double>(sampleAtIndex(candidate, channel, candidateSample)
-                    - sampleAtIndex(candidate, channel, previousCandidateSample));
-
-                dot += referenceValue * candidateValue;
-                referenceSquared += referenceValue * referenceValue;
-                candidateSquared += candidateValue * candidateValue;
-                ++count;
-            }
-        }
-
-        if (count == 0 || referenceSquared <= 0.0 || candidateSquared <= 0.0)
+        const auto alignment = calculateDifferencedAlignmentScore(reference, candidate, offset, stride);
+        if (! alignment.valid)
             continue;
 
-        const auto signedScore = dot / std::sqrt(referenceSquared * candidateSquared);
-        const auto score = signedScore;
         if (offset == 0)
         {
-            zeroOffsetScore = score;
-            zeroOffsetSignedScore = signedScore;
+            zeroOffsetScore = alignment.score;
+            zeroOffsetSignedScore = alignment.signedScore;
         }
 
-        if (score > bestScore)
+        if (alignment.score > bestScore)
         {
-            bestScore = score;
-            bestSignedScore = signedScore;
+            bestScore = alignment.score;
+            bestSignedScore = alignment.signedScore;
             bestOffset = offset;
         }
     }

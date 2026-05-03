@@ -9,6 +9,9 @@ namespace mixdesk::engine
 namespace
 {
 constexpr auto chunkSamples = 65536;
+// Waveforms are display-only, so cap per-point sampling to avoid spending load
+// time scanning millions of samples that map to the same pixel-scale peak.
+constexpr auto maxSamplesPerWaveformPoint = 256;
 
 float samplePeakAt(const juce::AudioBuffer<float>& buffer, int sampleIndex) noexcept
 {
@@ -97,14 +100,30 @@ model::StemWaveform WaveformAnalyzer::analyzeBuffer(const juce::AudioBuffer<floa
         static_cast<std::size_t>(std::ceil(waveform.durationSeconds * waveform.pointsPerSecond)));
     waveform.peaks.assign(pointCount, 0.0f);
 
-    for (auto sampleIndex = 0; sampleIndex < audio.getNumSamples(); ++sampleIndex)
-    {
-        const auto pointIndex = std::min<std::size_t>(
-            waveform.peaks.size() - 1,
-            static_cast<std::size_t>((static_cast<juce::int64>(sampleIndex) * static_cast<juce::int64>(waveform.peaks.size()))
-                / std::max(1, audio.getNumSamples())));
+    const auto sampleCount = audio.getNumSamples();
 
-        waveform.peaks[pointIndex] = std::max(waveform.peaks[pointIndex], samplePeakAt(audio, sampleIndex));
+    for (std::size_t pointIndex = 0; pointIndex < waveform.peaks.size(); ++pointIndex)
+    {
+        const auto startSample = static_cast<int>((static_cast<juce::int64>(pointIndex) * sampleCount)
+            / static_cast<juce::int64>(waveform.peaks.size()));
+        const auto endSample = static_cast<int>((static_cast<juce::int64>(pointIndex + 1) * sampleCount)
+            / static_cast<juce::int64>(waveform.peaks.size()));
+        const auto pointSamples = std::max(1, endSample - startSample);
+        const auto stride = std::max(1, pointSamples / maxSamplesPerWaveformPoint);
+        auto peak = 0.0f;
+
+        if (endSample <= startSample)
+        {
+            waveform.peaks[pointIndex] = samplePeakAt(audio, std::clamp(startSample, 0, sampleCount - 1));
+            continue;
+        }
+
+        for (auto sampleIndex = startSample; sampleIndex < endSample; sampleIndex += stride)
+            peak = std::max(peak, samplePeakAt(audio, sampleIndex));
+
+        peak = std::max(peak, samplePeakAt(audio, endSample - 1));
+
+        waveform.peaks[pointIndex] = peak;
     }
 
     // Display-only normalization: raw stem buffers used for residual math are never

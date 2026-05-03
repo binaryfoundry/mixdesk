@@ -102,6 +102,15 @@ std::shared_ptr<TrackLoadResult> loadTrackForDeck(int requestId,
     result->requestId = requestId;
     result->deckId = deckId;
     result->launchOffsetBars = launchOffsetBars;
+    const auto loadStartMs = juce::Time::getMillisecondCounterHiRes();
+    auto stageStartMs = loadStartMs;
+    juce::String timingReport;
+    const auto recordStage = [&stageStartMs, &timingReport](const juce::String& name)
+    {
+        const auto nowMs = juce::Time::getMillisecondCounterHiRes();
+        timingReport += "\n- " + name + ": " + juce::String(nowMs - stageStartMs, 1) + " ms";
+        stageStartMs = nowMs;
+    };
 
     const auto bundle = engine::loadTrackBundleFromMixdeskJson(metadataFile);
     if (! bundle.has_value())
@@ -109,6 +118,7 @@ std::shared_ptr<TrackLoadResult> loadTrackForDeck(int requestId,
         result->message = "Could not read " + metadataFile.getFullPathName();
         return result;
     }
+    recordStage("metadata");
 
     engine::StemPreparation stemPreparation;
     auto preparedStemSet = stemPreparation.loadPreparedStemSet(bundle->primaryAudioFile,
@@ -133,6 +143,7 @@ std::shared_ptr<TrackLoadResult> loadTrackForDeck(int requestId,
                 + preparedStemSet.message;
         }
     }
+    recordStage("stem decode/preparation");
 
     engine::BeatDetector beatDetector;
     const auto canAnalyzePreparedDrums = preparedStemSet.succeeded && preparedStemSet.stems.drums.hasAudio();
@@ -163,6 +174,7 @@ std::shared_ptr<TrackLoadResult> loadTrackForDeck(int requestId,
             return result;
         }
     }
+    recordStage("beat grid");
 
     result->track = bundle->loadedTrack;
     result->hasPreparedAudio = preparedStemSet.succeeded;
@@ -210,9 +222,11 @@ std::shared_ptr<TrackLoadResult> loadTrackForDeck(int requestId,
         if (bundle->vocalStemFile.existsAsFile())
             result->stemWaveforms.push_back(waveformAnalyzer.analyzeStem(bundle->vocalStemFile, model::StemType::Vocals));
     }
+    recordStage("waveforms");
 
     engine::PhraseAnalyzer phraseAnalyzer;
     result->phraseBlocks = phraseAnalyzer.analyze(result->beatGrid, result->stemWaveforms, 8);
+    recordStage("phrases");
     result->preparedStems = std::move(preparedStemSet.stems);
     result->message = preparedStemSet.message;
     const auto beatGridSecondsPerBar = model::beatGridSecondsPerBar(result->beatGrid);
@@ -223,6 +237,9 @@ std::shared_ptr<TrackLoadResult> loadTrackForDeck(int requestId,
         + " BPM exact, first beat offset " + juce::String(result->beatGrid.firstBeatOffsetSeconds * 1000.0, 2)
         + " ms / " + juce::String(audioLeadInBars, 4)
         + " bars from file start (" + beatAnalysisSource + ")";
+    const auto totalLoadMs = juce::Time::getMillisecondCounterHiRes() - loadStartMs;
+    result->message += "\nLoad timings:" + timingReport
+        + "\n- total: " + juce::String(totalLoadMs, 1) + " ms";
     result->succeeded = true;
     return result;
 }
