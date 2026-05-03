@@ -23,6 +23,7 @@ public:
     void configureGridPlayback(double secondsPerBar, double firstBeatOffsetSeconds, int launchOffsetBars);
     void setLaunchOffsetBars(int launchOffsetBars);
     void setStemEnabled(model::StemType stemType, bool enabled);
+    void setMasterVolume(float volume);
 
     [[nodiscard]] bool isPlaying() const;
     [[nodiscard]] double getCurrentPositionSeconds() const;
@@ -56,6 +57,7 @@ private:
     double lengthSeconds {};
     int launchOffsetBars {};
     model::StemEnableState stemEnabled;
+    float masterVolume { 0.90f };
     bool playing {};
     bool loaded {};
 };

@@ -97,4 +97,9 @@ void WorkspaceController::apply(const SetCurrentBarPositionCommand& command)
 {
     state.currentBarPosition = command.barPosition;
 }
+
+void WorkspaceController::apply(const SetMasterVolumeCommand& command)
+{
+    state.masterVolume = std::clamp(command.volume, 0.0f, 1.0f);
+}
 } // namespace mixdesk::engine

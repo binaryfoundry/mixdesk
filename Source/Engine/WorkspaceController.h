@@ -58,6 +58,11 @@ struct SetCurrentBarPositionCommand
     double barPosition {};
 };
 
+struct SetMasterVolumeCommand
+{
+    float volume { 1.0f };
+};
+
 using WorkspaceCommand = std::variant<
     MovePhraseBlockCommand,
     NudgeLaunchOffsetCommand,
@@ -66,7 +71,8 @@ using WorkspaceCommand = std::variant<
     SetDeckLoadedTrackCommand,
     SetDeckPlayingCommand,
     SetDeckStemEnabledCommand,
-    SetCurrentBarPositionCommand>;
+    SetCurrentBarPositionCommand,
+    SetMasterVolumeCommand>;
 
 class WorkspaceController
 {
@@ -85,6 +91,7 @@ private:
     void apply(const SetDeckPlayingCommand& command);
     void apply(const SetDeckStemEnabledCommand& command);
     void apply(const SetCurrentBarPositionCommand& command);
+    void apply(const SetMasterVolumeCommand& command);
 
     model::WorkspaceState state;
 };

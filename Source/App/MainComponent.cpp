@@ -85,6 +85,13 @@ MainComponent::MainComponent()
         refreshWorkspaceSnapshot();
     };
 
+    phraseWorkspace->onMasterVolumeChanged = [this](float volume)
+    {
+        workspaceController.dispatch(engine::SetMasterVolumeCommand { volume });
+        deckPlaybackEngine.setMasterVolume(volume);
+        refreshWorkspaceSnapshot();
+    };
+
     loadDeckOneFromTracksFolder();
     refreshWorkspaceSnapshot();
 

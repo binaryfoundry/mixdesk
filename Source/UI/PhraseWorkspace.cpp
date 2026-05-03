@@ -236,6 +236,17 @@ void PhraseWorkspace::mouseDown(const juce::MouseEvent& event)
         return;
     }
 
+    if (getMasterVolumeBounds().contains(event.position))
+    {
+        selectedBlockIndex.reset();
+        activeDrag.reset();
+        activeTrackDrag.reset();
+        activeVolumeDragSource = sourceIndex;
+        setMasterVolumeFromPoint(event.position);
+        repaint();
+        return;
+    }
+
     if (const auto hit = hitTestStemToggle(event.position))
     {
         selectedDeck = hit->deckId;
@@ -352,6 +363,12 @@ void PhraseWorkspace::mouseDrag(const juce::MouseEvent& event)
         }
     }
 
+    if (activeVolumeDragSource.has_value() && *activeVolumeDragSource == sourceIndex)
+    {
+        setMasterVolumeFromPoint(event.position);
+        repaint();
+    }
+
     updatePinchZoomFromPointers();
 }
 
@@ -374,6 +391,9 @@ void PhraseWorkspace::mouseUp(const juce::MouseEvent& event)
 
     if (activeTrackDrag.has_value() && activeTrackDrag->sourceIndex == sourceIndex)
         activeTrackDrag.reset();
+
+    if (activeVolumeDragSource.has_value() && *activeVolumeDragSource == sourceIndex)
+        activeVolumeDragSource.reset();
 
     activePointers.erase(sourceIndex);
 }
@@ -406,6 +426,17 @@ juce::Rectangle<float> PhraseWorkspace::getTransportButtonBounds() const
     const auto header = getHeaderBounds();
     const auto size = 42.0f;
     return { header.getX() + outerPadding, header.getCentreY() - (size * 0.5f), size, size };
+}
+
+juce::Rectangle<float> PhraseWorkspace::getMasterVolumeBounds() const
+{
+    const auto header = getHeaderBounds();
+    return { header.getRight() - outerPadding - 220.0f, header.getY() + 11.0f, 220.0f, header.getHeight() - 22.0f };
+}
+
+juce::Rectangle<float> PhraseWorkspace::getMasterVolumeTrackBounds() const
+{
+    return getMasterVolumeBounds().reduced(14.0f, 0.0f).withTrimmedTop(24.0f).withHeight(10.0f);
 }
 
 juce::Rectangle<float> PhraseWorkspace::getTimelineBounds() const
@@ -567,6 +598,8 @@ void PhraseWorkspace::drawHeader(juce::Graphics& g)
 
     auto content = header.reduced(outerPadding, 0.0f);
     const auto transportButton = getTransportButtonBounds();
+    const auto volumeBounds = getMasterVolumeBounds();
+    const auto volumeTrack = getMasterVolumeTrackBounds();
     const auto isPlaying = isWorkspacePlaying();
 
     g.setColour(isPlaying ? juce::Colour(0xffd6eef5) : juce::Colour(0xff24313a));
@@ -592,6 +625,7 @@ void PhraseWorkspace::drawHeader(juce::Graphics& g)
     }
 
     content.removeFromLeft(transportButton.getWidth() + 14.0f);
+    content.removeFromRight(volumeBounds.getWidth() + 14.0f);
     auto titleArea = content.removeFromLeft(330.0f);
 
     g.setColour(textColour());
@@ -619,6 +653,31 @@ void PhraseWorkspace::drawHeader(juce::Graphics& g)
 
     g.setColour(mutedTextColour());
     g.drawText(statusText, content.toNearestInt(), juce::Justification::centredRight, true);
+
+    const auto volume = std::clamp(state.masterVolume, 0.0f, 1.0f);
+    g.setColour(juce::Colour(0xff101820));
+    g.fillRoundedRectangle(volumeBounds, 8.0f);
+    g.setColour(juce::Colour(0xff2a333b));
+    g.drawRoundedRectangle(volumeBounds, 8.0f, 1.0f);
+
+    const auto volumeLabel = juce::String("VOL ") + juce::String(static_cast<int>(std::round(volume * 100.0f))) + "%";
+    g.setColour(textColour());
+    g.setFont(makeFont(12.5f, juce::Font::bold));
+    g.drawFittedText(volumeLabel, volumeBounds.reduced(12.0f, 3.0f).removeFromTop(18.0f).toNearestInt(),
+        juce::Justification::centredLeft, 1);
+
+    g.setColour(juce::Colour(0xff0a1014));
+    g.fillRoundedRectangle(volumeTrack, 5.0f);
+    const auto fillWidth = volumeTrack.getWidth() * volume;
+    g.setColour(juce::Colour(0xffd6eef5));
+    g.fillRoundedRectangle(volumeTrack.withWidth(fillWidth), 5.0f);
+
+    const auto thumbX = volumeTrack.getX() + fillWidth;
+    const auto thumb = juce::Rectangle<float>(thumbX - 9.0f, volumeTrack.getCentreY() - 13.0f, 18.0f, 26.0f);
+    g.setColour(juce::Colour(0xffeef3f5));
+    g.fillRoundedRectangle(thumb, 7.0f);
+    g.setColour(juce::Colour(0xff101318).withAlpha(0.68f));
+    g.drawRoundedRectangle(thumb, 7.0f, 1.0f);
 }
 
 void PhraseWorkspace::drawGrid(juce::Graphics& g)
@@ -1244,6 +1303,27 @@ PhraseWorkspace::ConflictFlags PhraseWorkspace::detectConflictForBlock(std::size
     }
 
     return conflictFlags;
+}
+
+float PhraseWorkspace::volumeForX(float x) const
+{
+    const auto track = getMasterVolumeTrackBounds();
+    if (track.getWidth() <= 0.0f)
+        return state.masterVolume;
+
+    return std::clamp((x - track.getX()) / track.getWidth(), 0.0f, 1.0f);
+}
+
+void PhraseWorkspace::setMasterVolumeFromPoint(juce::Point<float> position)
+{
+    const auto volume = volumeForX(position.x);
+    if (std::abs(state.masterVolume - volume) < 0.001f)
+        return;
+
+    state.masterVolume = volume;
+
+    if (onMasterVolumeChanged)
+        onMasterVolumeChanged(volume);
 }
 
 bool PhraseWorkspace::isWorkspacePlaying() const

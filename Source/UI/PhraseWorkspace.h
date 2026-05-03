@@ -19,6 +19,7 @@ public:
     using RoleChangeCallback = std::function<void(model::DeckId, model::DeckRole)>;
     using PlaybackToggleCallback = std::function<void()>;
     using StemToggleCallback = std::function<void(model::DeckId, model::StemType, bool)>;
+    using MasterVolumeCallback = std::function<void(float)>;
 
     PhraseWorkspace();
 
@@ -39,6 +40,7 @@ public:
     RoleChangeCallback onRoleChangeRequested;
     PlaybackToggleCallback onPlaybackToggleRequested;
     StemToggleCallback onStemToggleRequested;
+    MasterVolumeCallback onMasterVolumeChanged;
 
 private:
     enum class SnapMode
@@ -103,6 +105,8 @@ private:
 
     juce::Rectangle<float> getHeaderBounds() const;
     juce::Rectangle<float> getTransportButtonBounds() const;
+    juce::Rectangle<float> getMasterVolumeBounds() const;
+    juce::Rectangle<float> getMasterVolumeTrackBounds() const;
     juce::Rectangle<float> getTimelineBounds() const;
     juce::Rectangle<float> getGridBounds() const;
     juce::Rectangle<float> getControlBounds() const;
@@ -143,6 +147,8 @@ private:
     void updateButtonText();
 
     ConflictFlags detectConflictForBlock(std::size_t deckIndex, std::size_t blockIndex) const;
+    float volumeForX(float x) const;
+    void setMasterVolumeFromPoint(juce::Point<float> position);
     bool isWorkspacePlaying() const;
     void zoomAround(float componentX, float scaleFactor);
     void updatePinchZoomFromPointers();
@@ -152,6 +158,7 @@ private:
     std::optional<std::size_t> selectedBlockIndex;
     std::optional<ActiveDrag> activeDrag;
     std::optional<ActiveTrackDrag> activeTrackDrag;
+    std::optional<int> activeVolumeDragSource;
     std::unordered_map<int, PointerContact> activePointers;
 
     SnapMode snapMode { SnapMode::Bar };

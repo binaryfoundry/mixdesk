@@ -115,6 +115,7 @@ struct WorkspaceState
     int beatsPerBar { 4 };
     int barsPerPhrase { 8 };
     double currentBarPosition { 0.0 };
+    float masterVolume { 0.90f };
     std::vector<DeckTimeline> decks;
 };
 

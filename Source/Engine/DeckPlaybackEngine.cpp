@@ -253,6 +253,12 @@ void DeckPlaybackEngine::setStemEnabled(model::StemType stemType, bool enabled)
     model::setStemEnabled(stemEnabled, stemType, enabled);
 }
 
+void DeckPlaybackEngine::setMasterVolume(float volume)
+{
+    const juce::ScopedLock scopedLock(lock);
+    masterVolume = std::clamp(volume, 0.0f, 1.0f);
+}
+
 bool DeckPlaybackEngine::isPlaying() const
 {
     const juce::ScopedLock scopedLock(lock);
@@ -299,7 +305,6 @@ void DeckPlaybackEngine::getNextAudioBlock(const juce::AudioSourceChannelInfo& b
 
     auto* outputBuffer = bufferToFill.buffer;
     const auto endSample = bufferToFill.startSample + bufferToFill.numSamples;
-    constexpr auto masterGain = 0.90f;
 
     for (auto sample = bufferToFill.startSample; sample < endSample; ++sample)
     {
@@ -317,7 +322,7 @@ void DeckPlaybackEngine::getNextAudioBlock(const juce::AudioSourceChannelInfo& b
                 + (stemEnabled.bass ? sampleAt(bass, channel, currentPositionSeconds) : 0.0f)
                 + (stemEnabled.vocal ? sampleAt(vocal, channel, currentPositionSeconds) : 0.0f);
 
-            outputBuffer->setSample(channel, sample, mixedSample * masterGain);
+            outputBuffer->setSample(channel, sample, mixedSample * masterVolume);
         }
 
         if (secondsPerBar > 0.0)
