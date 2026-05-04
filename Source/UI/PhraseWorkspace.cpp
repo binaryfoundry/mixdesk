@@ -576,7 +576,7 @@ juce::Rectangle<float> PhraseWorkspace::getTransportButtonBounds() const
 juce::Rectangle<float> PhraseWorkspace::getBpmBounds() const
 {
     const auto header = getHeaderBounds();
-    return { header.getRight() - outerPadding - 452.0f, header.getY() + 11.0f, 220.0f, header.getHeight() - 22.0f };
+    return { header.getRight() - outerPadding - 892.0f, header.getY() + 11.0f, 660.0f, header.getHeight() - 22.0f };
 }
 
 juce::Rectangle<float> PhraseWorkspace::getBpmTrackBounds() const
