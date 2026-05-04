@@ -74,9 +74,6 @@ void WorkspaceController::apply(const SetDeckLoadedTrackCommand& command)
     deck->blocks = command.phraseBlocks;
 
     if (shouldAdoptTrackTempo)
-        model::assignAllPublicStemsToLoadedDeck(state, command.deckId);
-
-    if (shouldAdoptTrackTempo)
     {
         if (command.beatGrid.tempo > 0.0)
             state.bpm = command.beatGrid.tempo;

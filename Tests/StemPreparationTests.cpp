@@ -392,13 +392,24 @@ mixdesk::engine::SetDeckLoadedTrackCommand makeLoadCommand(mixdesk::model::DeckI
     return { deckId, track, beatGrid, {}, {} };
 }
 
-bool testFirstLoadedTrackClaimsAllStemVolumes()
+bool testLoadingTrackPreservesStemState()
 {
     mixdesk::model::WorkspaceState state;
     state.decks.resize(3);
     state.decks[0].id = mixdesk::model::DeckId::A;
     state.decks[1].id = mixdesk::model::DeckId::B;
     state.decks[2].id = mixdesk::model::DeckId::C;
+
+    mixdesk::model::setStemEnabled(state.decks[0].stemEnabled, StemType::Drums, false);
+    mixdesk::model::setStemEnabled(state.decks[1].stemEnabled, StemType::Bass, false);
+    mixdesk::model::setStemEnabled(state.decks[2].stemEnabled, StemType::Vocals, false);
+    mixdesk::model::setStemVolume(state.decks[0].stemEnabled, StemType::Drums, 0.72f);
+    mixdesk::model::setStemVolume(state.decks[1].stemEnabled, StemType::Bass, 0.35f);
+    mixdesk::model::setStemVolume(state.decks[2].stemEnabled, StemType::Vocals, 0.10f);
+
+    const auto beforeA = state.decks[0].stemEnabled;
+    const auto beforeB = state.decks[1].stemEnabled;
+    const auto beforeC = state.decks[2].stemEnabled;
 
     mixdesk::engine::WorkspaceController controller(state);
     controller.dispatch(mixdesk::engine::WorkspaceCommand { makeLoadCommand(mixdesk::model::DeckId::B, 124.0, 4) });
@@ -410,23 +421,29 @@ bool testFirstLoadedTrackClaimsAllStemVolumes()
     {
         const auto stemName = std::string(mixdesk::model::toString(stemType));
 
-        ok = expect(! mixdesk::model::isStemEnabled(snapshot.decks[0].stemEnabled, stemType),
-                 "first load disables deck A " + stemName)
+        ok = expect(mixdesk::model::isStemEnabled(snapshot.decks[0].stemEnabled, stemType)
+                    == mixdesk::model::isStemEnabled(beforeA, stemType),
+                 "load preserves deck A " + stemName + " enabled state")
             && ok;
-        ok = expect(mixdesk::model::isStemEnabled(snapshot.decks[1].stemEnabled, stemType),
-                 "first load enables deck B " + stemName)
+        ok = expect(mixdesk::model::isStemEnabled(snapshot.decks[1].stemEnabled, stemType)
+                    == mixdesk::model::isStemEnabled(beforeB, stemType),
+                 "load preserves deck B " + stemName + " enabled state")
             && ok;
-        ok = expect(! mixdesk::model::isStemEnabled(snapshot.decks[2].stemEnabled, stemType),
-                 "first load disables deck C " + stemName)
+        ok = expect(mixdesk::model::isStemEnabled(snapshot.decks[2].stemEnabled, stemType)
+                    == mixdesk::model::isStemEnabled(beforeC, stemType),
+                 "load preserves deck C " + stemName + " enabled state")
             && ok;
-        ok = expect(std::abs(mixdesk::model::stemVolume(snapshot.decks[0].stemEnabled, stemType)) < tolerance,
-                 "first load zeros deck A " + stemName)
+        ok = expect(std::abs(mixdesk::model::stemVolume(snapshot.decks[0].stemEnabled, stemType)
+                         - mixdesk::model::stemVolume(beforeA, stemType)) < tolerance,
+                 "load preserves deck A " + stemName + " volume")
             && ok;
-        ok = expect(std::abs(mixdesk::model::stemVolume(snapshot.decks[1].stemEnabled, stemType) - 1.0f) < tolerance,
-                 "first load gives deck B full " + stemName)
+        ok = expect(std::abs(mixdesk::model::stemVolume(snapshot.decks[1].stemEnabled, stemType)
+                         - mixdesk::model::stemVolume(beforeB, stemType)) < tolerance,
+                 "load preserves deck B " + stemName + " volume")
             && ok;
-        ok = expect(std::abs(mixdesk::model::stemVolume(snapshot.decks[2].stemEnabled, stemType)) < tolerance,
-                 "first load zeros deck C " + stemName)
+        ok = expect(std::abs(mixdesk::model::stemVolume(snapshot.decks[2].stemEnabled, stemType)
+                         - mixdesk::model::stemVolume(beforeC, stemType)) < tolerance,
+                 "load preserves deck C " + stemName + " volume")
             && ok;
     }
 
@@ -603,7 +620,7 @@ int main()
     failures += testStemVolumesBalanceAcrossLoadedDecks() ? 0 : 1;
     failures += testStemVolumeChangesRenormalizeOtherDecks() ? 0 : 1;
     failures += testVocalStemButtonAssignsVoiceToOneDeck() ? 0 : 1;
-    failures += testFirstLoadedTrackClaimsAllStemVolumes() ? 0 : 1;
+    failures += testLoadingTrackPreservesStemState() ? 0 : 1;
     failures += testWorkspaceBpmOnlyAdoptsFirstLoadedTrack() ? 0 : 1;
     failures += testLoadingTrackDoesNotChangeStemVolumes() ? 0 : 1;
     failures += testBeatGridMapsAudioStartBeforeFirstBeat() ? 0 : 1;
