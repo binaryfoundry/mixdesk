@@ -21,21 +21,6 @@ constexpr auto spectrumHighFrequencyHz = 18000.0;
 constexpr auto spectrumFloorDb = -62.0;
 constexpr auto spectrumCeilingDb = -8.0;
 
-std::vector<double> makeFallbackBeatTimes(double durationSeconds, double secondsPerBeat)
-{
-    std::vector<double> beatTimes;
-
-    if (durationSeconds <= 0.0 || secondsPerBeat <= 0.0)
-        return beatTimes;
-
-    beatTimes.reserve(static_cast<std::size_t>(durationSeconds / secondsPerBeat) + 2);
-
-    for (auto beatTime = 0.0; beatTime <= durationSeconds; beatTime += secondsPerBeat)
-        beatTimes.push_back(beatTime);
-
-    return beatTimes;
-}
-
 juce::String deckLabel(model::DeckId deckId)
 {
     const auto text = model::toString(deckId);
@@ -167,25 +152,14 @@ std::shared_ptr<TrackLoadResult> loadTrackForDeck(int requestId,
     }
     recordStage("stem decode/preparation");
 
-    auto beatAnalysisSource = juce::String("mixdesk.json beat_grid");
     model::BeatGrid beatGrid;
     if (bundle->metadataBeatGrid.has_value())
     {
         beatGrid = *bundle->metadataBeatGrid;
     }
-    else if (bundle->metadataBpm > 0.0)
-    {
-        beatGrid.bpm = static_cast<int>(std::round(bundle->metadataBpm));
-        beatGrid.tempo = bundle->metadataBpm;
-        beatGrid.secondsPerBeat = 60.0 / bundle->metadataBpm;
-        beatGrid.beatsPerBar = 4;
-        beatGrid.durationSeconds = bundle->loadedTrack.durationSeconds;
-        beatGrid.beatTimesSeconds = makeFallbackBeatTimes(beatGrid.durationSeconds, beatGrid.secondsPerBeat);
-        beatAnalysisSource = "track metadata BPM fallback";
-    }
     else
     {
-        result->message = "No beat_grid or BPM metadata found for " + juce::String(bundle->loadedTrack.name)
+        result->message = "No usable beat_grid with beats and bars found for " + juce::String(bundle->loadedTrack.name)
             + ". Run Tools\\generate_mixdesk.py for this track folder.";
         return result;
     }
@@ -244,13 +218,14 @@ std::shared_ptr<TrackLoadResult> loadTrackForDeck(int requestId,
     result->preparedStems = std::move(preparedStemSet.stems);
     result->message = preparedStemSet.message;
     const auto beatGridSecondsPerBar = model::beatGridSecondsPerBar(result->beatGrid);
+    const auto firstBarOffsetSeconds = model::gridBarToTrackTime(result->beatGrid, 0, 0.0);
     const auto audioLeadInBars = beatGridSecondsPerBar > 0.0
-        ? result->beatGrid.firstBeatOffsetSeconds / beatGridSecondsPerBar
+        ? firstBarOffsetSeconds / beatGridSecondsPerBar
         : 0.0;
     result->message += "\nBeat grid: " + juce::String(result->beatGrid.tempo, 4)
-        + " BPM exact, first beat offset " + juce::String(result->beatGrid.firstBeatOffsetSeconds * 1000.0, 2)
+        + " BPM exact, first bar offset " + juce::String(firstBarOffsetSeconds * 1000.0, 2)
         + " ms / " + juce::String(audioLeadInBars, 4)
-        + " bars from file start (" + beatAnalysisSource + ")";
+        + " bars from file start (mixdesk.json beat_grid)";
     const auto totalLoadMs = juce::Time::getMillisecondCounterHiRes() - loadStartMs;
     result->message += "\nLoad timings:" + timingReport
         + "\n- total: " + juce::String(totalLoadMs, 1) + " ms";
@@ -590,9 +565,9 @@ void MainComponent::configureDeckGridPlayback(model::DeckId deckId)
     if (! beatGrid.has_value())
         return;
 
-    const auto secondsPerBar = beatGrid->secondsPerBeat * static_cast<double>(std::max(1, beatGrid->beatsPerBar));
+    const auto secondsPerBar = model::beatGridSecondsPerBar(*beatGrid);
     auto& playbackEngine = playbackEngineFor(deckId);
-    playbackEngine.configureGridPlayback(secondsPerBar, beatGrid->firstBeatOffsetSeconds, deckLaunchOffsetBars[slot]);
+    playbackEngine.configureGridPlayback(secondsPerBar, model::gridBarToTrackTime(*beatGrid, 0, 0.0), deckLaunchOffsetBars[slot]);
 
     const auto snapshot = workspaceController.createSnapshot();
     playbackEngine.setGlobalBpm(snapshot.bpm, snapshot.beatsPerBar);

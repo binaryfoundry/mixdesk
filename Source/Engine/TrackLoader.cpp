@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <set>
+#include <vector>
 
 namespace mixdesk::engine
 {
@@ -91,6 +92,29 @@ double readDoubleProperty(const juce::DynamicObject* object, const juce::Identif
     return value.isDouble() || value.isInt() ? static_cast<double>(value) : 0.0;
 }
 
+bool isNumericVar(const juce::var& value)
+{
+    return value.isDouble() || value.isInt();
+}
+
+std::vector<double> readDoubleArrayProperty(const juce::DynamicObject* object, const juce::Identifier& propertyName)
+{
+    std::vector<double> output;
+    if (object == nullptr)
+        return output;
+
+    const auto value = object->getProperty(propertyName);
+    if (auto* array = value.getArray())
+    {
+        output.reserve(static_cast<std::size_t>(array->size()));
+        for (const auto& item : *array)
+            if (isNumericVar(item))
+                output.push_back(static_cast<double>(item));
+    }
+
+    return output;
+}
+
 std::optional<model::BeatGrid> readBeatGrid(const juce::DynamicObject* root)
 {
     if (root == nullptr)
@@ -108,26 +132,36 @@ std::optional<model::BeatGrid> readBeatGrid(const juce::DynamicObject* root)
     beatGrid.secondsPerBeat = readDoubleProperty(beatGridObject, "seconds_per_beat");
     beatGrid.beatsPerBar = std::max(1, static_cast<int>(std::round(readDoubleProperty(beatGridObject, "beats_per_bar"))));
     beatGrid.durationSeconds = readDoubleProperty(beatGridObject, "duration_seconds");
+    beatGrid.beatTimesSeconds = readDoubleArrayProperty(beatGridObject, "beat_times_seconds");
+    beatGrid.barTimesSeconds = readDoubleArrayProperty(beatGridObject, "bars");
 
-    const auto beatTimesValue = beatGridObject->getProperty("beat_times_seconds");
-    if (auto* beatTimes = beatTimesValue.getArray())
+    const auto beatEventsValue = beatGridObject->getProperty("beat_events");
+    if (auto* beatEvents = beatEventsValue.getArray())
     {
-        beatGrid.beatTimesSeconds.reserve(static_cast<std::size_t>(beatTimes->size()));
-        for (const auto& beatTime : *beatTimes)
-            if (beatTime.isDouble() || beatTime.isInt())
-                beatGrid.beatTimesSeconds.push_back(static_cast<double>(beatTime));
+        beatGrid.beatInBars.reserve(static_cast<std::size_t>(beatEvents->size()));
+        for (const auto& beatEvent : *beatEvents)
+        {
+            const auto* beatObject = beatEvent.getDynamicObject();
+            if (beatObject == nullptr)
+                continue;
+
+            const auto beatInBar = beatObject->getProperty("beat_in_bar");
+            if (isNumericVar(beatInBar))
+                beatGrid.beatInBars.push_back(static_cast<int>(std::round(static_cast<double>(beatInBar))));
+        }
     }
 
     if (beatGrid.tempo <= 0.0 && beatGrid.bpm > 0)
         beatGrid.tempo = static_cast<double>(beatGrid.bpm);
 
-    if (beatGrid.secondsPerBeat <= 0.0 && beatGrid.tempo > 0.0)
-        beatGrid.secondsPerBeat = 60.0 / beatGrid.tempo;
-
     if (beatGrid.bpm <= 0 && beatGrid.tempo > 0.0)
         beatGrid.bpm = static_cast<int>(std::round(beatGrid.tempo));
 
-    if (beatGrid.tempo <= 0.0 || beatGrid.secondsPerBeat <= 0.0)
+    if (beatGrid.tempo <= 0.0
+        || beatGrid.secondsPerBeat <= 0.0
+        || beatGrid.beatTimesSeconds.size() < 2
+        || beatGrid.barTimesSeconds.size() < 2
+        || beatGrid.beatInBars.size() != beatGrid.beatTimesSeconds.size())
         return std::nullopt;
 
     return beatGrid;
@@ -155,7 +189,7 @@ model::PhraseType readPhraseType(const juce::String& value)
     return model::PhraseType::Groove;
 }
 
-std::vector<model::PhraseBlock> readPhraseBlocks(const juce::DynamicObject* root, const std::optional<model::BeatGrid>& beatGrid)
+std::vector<model::PhraseBlock> readPhraseBlocks(const juce::DynamicObject* root)
 {
     std::vector<model::PhraseBlock> phraseBlocks;
     if (root == nullptr)
@@ -166,7 +200,6 @@ std::vector<model::PhraseBlock> readPhraseBlocks(const juce::DynamicObject* root
     if (phrases == nullptr)
         return phraseBlocks;
 
-    const auto beatsPerBar = std::max(1, beatGrid.has_value() ? beatGrid->beatsPerBar : 4);
     phraseBlocks.reserve(static_cast<std::size_t>(phrases->size()));
 
     for (const auto& phraseValue : *phrases)
@@ -175,15 +208,20 @@ std::vector<model::PhraseBlock> readPhraseBlocks(const juce::DynamicObject* root
         if (phraseObject == nullptr)
             continue;
 
-        const auto beatIndex = readDoubleProperty(phraseObject, "beat_index");
-        const auto beatCount = readDoubleProperty(phraseObject, "beat_count");
-        if (beatCount <= 0.0)
+        const auto startBarValue = phraseObject->getProperty("start_bar");
+        const auto endBarValue = phraseObject->getProperty("end_bar");
+        if (! isNumericVar(startBarValue) || ! isNumericVar(endBarValue))
+            continue;
+
+        const auto startBar = static_cast<int>(std::round(static_cast<double>(startBarValue)));
+        const auto endBar = static_cast<int>(std::round(static_cast<double>(endBarValue)));
+        if (endBar <= startBar)
             continue;
 
         model::PhraseBlock block;
         block.type = readPhraseType(readStringProperty(phraseObject, "type"));
-        block.startBar = static_cast<int>(std::round(beatIndex / static_cast<double>(beatsPerBar)));
-        block.lengthBars = std::max(1, static_cast<int>(std::round(beatCount / static_cast<double>(beatsPerBar))));
+        block.startBar = startBar;
+        block.lengthBars = std::max(1, endBar - startBar);
         block.energy = static_cast<float>(std::clamp(readDoubleProperty(phraseObject, "energy"), 0.0, 1.0));
         block.hasDrums = readBoolProperty(phraseObject, "has_drums");
         block.hasBass = readBoolProperty(phraseObject, "has_bass");
@@ -313,7 +351,7 @@ std::optional<TrackBundle> loadTrackBundleFromMixdeskJson(const juce::File& meta
     const auto duration = readDoubleProperty(root, "duration");
     const auto metadataBpm = readDoubleProperty(root, "bpm");
     auto metadataBeatGrid = readBeatGrid(root);
-    auto metadataPhraseBlocks = readPhraseBlocks(root, metadataBeatGrid);
+    auto metadataPhraseBlocks = readPhraseBlocks(root);
     const auto drumKey = readStringProperty(drumObject, "key");
 
     model::LoadedTrack loadedTrack;

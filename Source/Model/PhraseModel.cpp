@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <numeric>
 
 namespace mixdesk::model
 {
@@ -29,6 +30,197 @@ void setEqualStemVolumesAcrossLoadedDecks(WorkspaceState& state, StemType stemTy
     for (auto& deck : state.decks)
         if (loadedDeckParticipates(deck))
             setStemVolume(deck.stemEnabled, stemType, equalVolume);
+}
+
+bool hasUsableBeatTimes(const BeatGrid& beatGrid) noexcept
+{
+    if (beatGrid.beatTimesSeconds.size() < 2)
+        return false;
+
+    return std::is_sorted(beatGrid.beatTimesSeconds.begin(), beatGrid.beatTimesSeconds.end())
+        && beatGrid.beatTimesSeconds.front() < beatGrid.beatTimesSeconds.back();
+}
+
+bool hasUsableBarTimes(const BeatGrid& beatGrid) noexcept
+{
+    if (beatGrid.barTimesSeconds.size() < 2)
+        return false;
+
+    return std::is_sorted(beatGrid.barTimesSeconds.begin(), beatGrid.barTimesSeconds.end())
+        && beatGrid.barTimesSeconds.front() < beatGrid.barTimesSeconds.back();
+}
+
+double localBeatPeriod(const BeatGrid& beatGrid, std::size_t lowerBeatIndex) noexcept
+{
+    if (! hasUsableBeatTimes(beatGrid))
+        return beatGrid.secondsPerBeat;
+
+    const auto clampedIndex = std::min(lowerBeatIndex, beatGrid.beatTimesSeconds.size() - 2);
+    const auto delta = beatGrid.beatTimesSeconds[clampedIndex + 1] - beatGrid.beatTimesSeconds[clampedIndex];
+    return delta > 0.0 ? delta : beatGrid.secondsPerBeat;
+}
+
+double fallbackSecondsPerBar(const BeatGrid& beatGrid) noexcept
+{
+    return beatGrid.secondsPerBeat * static_cast<double>(std::max(1, beatGrid.beatsPerBar));
+}
+
+double localBarPeriod(const BeatGrid& beatGrid, std::size_t lowerBarIndex) noexcept
+{
+    const auto fallback = fallbackSecondsPerBar(beatGrid);
+    if (! hasUsableBarTimes(beatGrid))
+        return fallback;
+
+    const auto clampedIndex = std::min(lowerBarIndex, beatGrid.barTimesSeconds.size() - 2);
+    const auto delta = beatGrid.barTimesSeconds[clampedIndex + 1] - beatGrid.barTimesSeconds[clampedIndex];
+    return delta > 0.0 ? delta : fallback;
+}
+
+double fittedBeatPeriod(const BeatGrid& beatGrid) noexcept
+{
+    if (! hasUsableBeatTimes(beatGrid))
+        return beatGrid.secondsPerBeat;
+
+    const auto& beats = beatGrid.beatTimesSeconds;
+    const auto count = beats.size();
+    const auto meanIndex = static_cast<double>(count - 1) * 0.5;
+    const auto meanTime = std::accumulate(beats.begin(), beats.end(), 0.0) / static_cast<double>(count);
+    auto numerator = 0.0;
+    auto denominator = 0.0;
+
+    for (std::size_t index = 0; index < count; ++index)
+    {
+        const auto centeredIndex = static_cast<double>(index) - meanIndex;
+        numerator += centeredIndex * (beats[index] - meanTime);
+        denominator += centeredIndex * centeredIndex;
+    }
+
+    const auto slope = denominator > 0.0 ? numerator / denominator : 0.0;
+    if (slope > 0.0)
+        return slope;
+
+    return (beats.back() - beats.front()) / static_cast<double>(count - 1);
+}
+
+double fittedBarPeriod(const BeatGrid& beatGrid) noexcept
+{
+    if (! hasUsableBarTimes(beatGrid))
+        return fallbackSecondsPerBar(beatGrid);
+
+    const auto& bars = beatGrid.barTimesSeconds;
+    const auto count = bars.size();
+    const auto meanIndex = static_cast<double>(count - 1) * 0.5;
+    const auto meanTime = std::accumulate(bars.begin(), bars.end(), 0.0) / static_cast<double>(count);
+    auto numerator = 0.0;
+    auto denominator = 0.0;
+
+    for (std::size_t index = 0; index < count; ++index)
+    {
+        const auto centeredIndex = static_cast<double>(index) - meanIndex;
+        numerator += centeredIndex * (bars[index] - meanTime);
+        denominator += centeredIndex * centeredIndex;
+    }
+
+    const auto slope = denominator > 0.0 ? numerator / denominator : 0.0;
+    if (slope > 0.0)
+        return slope;
+
+    return (bars.back() - bars.front()) / static_cast<double>(count - 1);
+}
+
+double beatPositionForTrackTime(const BeatGrid& beatGrid, double trackTimeSeconds) noexcept
+{
+    if (! hasUsableBeatTimes(beatGrid))
+    {
+        if (beatGrid.secondsPerBeat <= 0.0)
+            return 0.0;
+
+        return (trackTimeSeconds - beatGrid.firstBeatOffsetSeconds) / beatGrid.secondsPerBeat;
+    }
+
+    const auto& beats = beatGrid.beatTimesSeconds;
+    const auto firstPeriod = localBeatPeriod(beatGrid, 0);
+    if (trackTimeSeconds <= beats.front())
+        return firstPeriod > 0.0 ? (trackTimeSeconds - beats.front()) / firstPeriod : 0.0;
+
+    const auto lastIndex = beats.size() - 1;
+    const auto lastPeriod = localBeatPeriod(beatGrid, lastIndex - 1);
+    if (trackTimeSeconds >= beats.back())
+        return static_cast<double>(lastIndex)
+            + (lastPeriod > 0.0 ? (trackTimeSeconds - beats.back()) / lastPeriod : 0.0);
+
+    const auto upper = std::upper_bound(beats.begin(), beats.end(), trackTimeSeconds);
+    const auto upperIndex = static_cast<std::size_t>(std::distance(beats.begin(), upper));
+    const auto lowerIndex = upperIndex > 0 ? upperIndex - 1 : 0;
+    const auto span = beats[upperIndex] - beats[lowerIndex];
+    const auto fraction = span > 0.0 ? (trackTimeSeconds - beats[lowerIndex]) / span : 0.0;
+    return static_cast<double>(lowerIndex) + fraction;
+}
+
+double trackTimeForBeatPosition(const BeatGrid& beatGrid, double beatPosition) noexcept
+{
+    if (! hasUsableBeatTimes(beatGrid))
+        return beatGrid.firstBeatOffsetSeconds + (beatPosition * beatGrid.secondsPerBeat);
+
+    const auto& beats = beatGrid.beatTimesSeconds;
+    const auto firstPeriod = localBeatPeriod(beatGrid, 0);
+    if (beatPosition <= 0.0)
+        return beats.front() + (beatPosition * firstPeriod);
+
+    const auto lastIndex = beats.size() - 1;
+    const auto lastBeatPosition = static_cast<double>(lastIndex);
+    const auto lastPeriod = localBeatPeriod(beatGrid, lastIndex - 1);
+    if (beatPosition >= lastBeatPosition)
+        return beats.back() + ((beatPosition - lastBeatPosition) * lastPeriod);
+
+    const auto lowerIndex = static_cast<std::size_t>(std::floor(beatPosition));
+    const auto fraction = beatPosition - static_cast<double>(lowerIndex);
+    return beats[lowerIndex] + ((beats[lowerIndex + 1] - beats[lowerIndex]) * fraction);
+}
+
+double barPositionForTrackTime(const BeatGrid& beatGrid, double trackTimeSeconds) noexcept
+{
+    if (! hasUsableBarTimes(beatGrid))
+        return beatPositionForTrackTime(beatGrid, trackTimeSeconds) / static_cast<double>(std::max(1, beatGrid.beatsPerBar));
+
+    const auto& bars = beatGrid.barTimesSeconds;
+    const auto firstPeriod = localBarPeriod(beatGrid, 0);
+    if (trackTimeSeconds <= bars.front())
+        return firstPeriod > 0.0 ? (trackTimeSeconds - bars.front()) / firstPeriod : 0.0;
+
+    const auto lastIndex = bars.size() - 1;
+    const auto lastPeriod = localBarPeriod(beatGrid, lastIndex - 1);
+    if (trackTimeSeconds >= bars.back())
+        return static_cast<double>(lastIndex)
+            + (lastPeriod > 0.0 ? (trackTimeSeconds - bars.back()) / lastPeriod : 0.0);
+
+    const auto upper = std::upper_bound(bars.begin(), bars.end(), trackTimeSeconds);
+    const auto upperIndex = static_cast<std::size_t>(std::distance(bars.begin(), upper));
+    const auto lowerIndex = upperIndex > 0 ? upperIndex - 1 : 0;
+    const auto span = bars[upperIndex] - bars[lowerIndex];
+    const auto fraction = span > 0.0 ? (trackTimeSeconds - bars[lowerIndex]) / span : 0.0;
+    return static_cast<double>(lowerIndex) + fraction;
+}
+
+double trackTimeForBarPosition(const BeatGrid& beatGrid, double barPosition) noexcept
+{
+    if (! hasUsableBarTimes(beatGrid))
+        return trackTimeForBeatPosition(beatGrid, barPosition * static_cast<double>(std::max(1, beatGrid.beatsPerBar)));
+
+    const auto& bars = beatGrid.barTimesSeconds;
+    const auto firstPeriod = localBarPeriod(beatGrid, 0);
+    if (barPosition <= 0.0)
+        return bars.front() + (barPosition * firstPeriod);
+
+    const auto lastIndex = bars.size() - 1;
+    const auto lastBarPosition = static_cast<double>(lastIndex);
+    const auto lastPeriod = localBarPeriod(beatGrid, lastIndex - 1);
+    if (barPosition >= lastBarPosition)
+        return bars.back() + ((barPosition - lastBarPosition) * lastPeriod);
+
+    const auto lowerIndex = static_cast<std::size_t>(std::floor(barPosition));
+    const auto fraction = barPosition - static_cast<double>(lowerIndex);
+    return bars[lowerIndex] + ((bars[lowerIndex + 1] - bars[lowerIndex]) * fraction);
 }
 } // namespace
 
@@ -446,6 +638,20 @@ DeckRole nextRole(DeckRole role) noexcept
 
 double beatGridSecondsPerBar(const BeatGrid& beatGrid) noexcept
 {
+    if (hasUsableBarTimes(beatGrid))
+    {
+        const auto barPeriod = fittedBarPeriod(beatGrid);
+        if (barPeriod > 0.0)
+            return barPeriod;
+    }
+
+    if (hasUsableBeatTimes(beatGrid))
+    {
+        const auto beatPeriod = fittedBeatPeriod(beatGrid);
+        if (beatPeriod > 0.0)
+            return beatPeriod * static_cast<double>(std::max(1, beatGrid.beatsPerBar));
+    }
+
     if (beatGrid.secondsPerBeat <= 0.0)
         return 0.0;
 
@@ -454,22 +660,20 @@ double beatGridSecondsPerBar(const BeatGrid& beatGrid) noexcept
 
 double trackTimeToGridBar(const BeatGrid& beatGrid, int launchOffsetBars, double trackTimeSeconds) noexcept
 {
-    const auto secondsPerBar = beatGridSecondsPerBar(beatGrid);
-    if (secondsPerBar <= 0.0)
+    const auto barPosition = barPositionForTrackTime(beatGrid, trackTimeSeconds);
+    if (! std::isfinite(barPosition))
         return static_cast<double>(launchOffsetBars);
 
-    return static_cast<double>(launchOffsetBars)
-        + ((trackTimeSeconds - beatGrid.firstBeatOffsetSeconds) / secondsPerBar);
+    return static_cast<double>(launchOffsetBars) + barPosition;
 }
 
 double gridBarToTrackTime(const BeatGrid& beatGrid, int launchOffsetBars, double gridBar) noexcept
 {
-    const auto secondsPerBar = beatGridSecondsPerBar(beatGrid);
-    if (secondsPerBar <= 0.0)
+    const auto barPosition = gridBar - static_cast<double>(launchOffsetBars);
+    if (! std::isfinite(barPosition))
         return 0.0;
 
-    return beatGrid.firstBeatOffsetSeconds
-        + ((gridBar - static_cast<double>(launchOffsetBars)) * secondsPerBar);
+    return trackTimeForBarPosition(beatGrid, barPosition);
 }
 
 double trackAudioStartBar(const BeatGrid& beatGrid, int launchOffsetBars) noexcept
@@ -479,8 +683,12 @@ double trackAudioStartBar(const BeatGrid& beatGrid, int launchOffsetBars) noexce
 
 double trackDurationBars(const BeatGrid& beatGrid) noexcept
 {
-    const auto secondsPerBar = beatGridSecondsPerBar(beatGrid);
-    return secondsPerBar > 0.0 ? beatGrid.durationSeconds / secondsPerBar : 0.0;
+    if (beatGrid.durationSeconds <= 0.0)
+        return 0.0;
+
+    const auto startBar = trackTimeToGridBar(beatGrid, 0, 0.0);
+    const auto endBar = trackTimeToGridBar(beatGrid, 0, beatGrid.durationSeconds);
+    return std::max(0.0, endBar - startBar);
 }
 
 DeckTimeline* findDeck(WorkspaceState& state, DeckId deckId) noexcept

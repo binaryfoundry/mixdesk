@@ -4,53 +4,66 @@
 from __future__ import annotations
 
 import argparse
-import array
 import json
-import math
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 from PIL import Image, ImageDraw
+
+from edm_phrase_detect.cli import detect_loaded_stems
+from edm_phrase_detect.config import Config
+from edm_phrase_detect.export import to_jsonable
+from edm_phrase_detect.models import PhraseResult, StemInfo
 
 
 STEM_MATCHES: tuple[tuple[str, tuple[tuple[str, ...], ...]], ...] = (
     ("no_bass", (("no", "bass"), ("nobass",))),
     ("no_drum", (("no", "drum"), ("no", "drums"), ("nodrum",), ("nodrums",))),
     ("no_vocals", (("no", "vocals"), ("no", "vocal"), ("novocals",), ("novocal",))),
+    ("kick", (("kick",),)),
+    ("synth", (("synth",), ("pad",), ("keys",))),
+    ("other", (("other",),)),
+    ("mix", (("mix",), ("full", "mix"), ("master",))),
     ("instrumental", (("instrumental",), ("instrument",))),
     ("vocals", (("vocals",), ("vocal",))),
     ("drum", (("drum",), ("drums",))),
     ("bass", (("bass",),)),
 )
 
-ENTRY_STEMS = ("drum", "bass", "vocals", "no_bass", "no_drum", "no_vocals", "instrumental")
-
-AUDIO_EXTENSIONS = {
-    ".aac",
-    ".aif",
-    ".aiff",
-    ".alac",
-    ".flac",
-    ".m4a",
-    ".mp3",
-    ".ogg",
-    ".opus",
-    ".wav",
-    ".wma",
-}
-
+ENTRY_STEMS = ("kick", "drum", "bass", "synth", "vocals", "other", "mix", "no_bass", "no_drum", "no_vocals", "instrumental")
+AUDIO_EXTENSIONS = {".aac", ".aif", ".aiff", ".alac", ".flac", ".m4a", ".mp3", ".ogg", ".opus", ".wav", ".wma"}
 BPM_TAGS = ("BPM", "TBPM", "bpm", "tmpo")
 KEY_TAGS = ("TKEY", "INITIAL_KEY", "initialkey", "initial_key", "KEY", "key")
 TITLE_TAGS = ("title", "TITLE", "TIT2")
-BEAT_ANALYSIS_SAMPLE_RATE = 11_025
-LOW_PASS_FREQUENCY_HZ = 240.0
+
 DEFAULT_BEATS_PER_BAR = 4
-MINIMUM_NUMBER_OF_PEAKS = 30
-BARS_PER_PHRASE = 8
+DEFAULT_ANALYSIS_BACKEND = "auto"
+DEFAULT_ANALYSIS_SAMPLE_RATE = 44_100
+DEFAULT_WAVEFORM_SAMPLE_RATE = 11_025
+MIN_PHRASE_BARS = 4
+ALLOWED_PHRASE_LENGTHS = (4, 8, 16, 32)
+PREFERRED_PHRASE_LENGTHS = (8, 16)
 PHRASE_ANALYSIS_IMAGE_NAME = "mixdesk_phrase_analysis.png"
+
+# MixDesk JSON indexing convention:
+# - start_bar is 0-based inclusive.
+# - end_bar is 0-based exclusive.
+# - beat_index is 0-based.
+# - final selected boundary uses bar_index == len(bars).
+# Display-only 1-based bar numbers are emitted separately as display_* fields.
+
+DECODE_CACHE: dict[tuple[str, int, int, int], np.ndarray] = {}
+
+
+def round_float(value: Any, digits: int = 6) -> float:
+    try:
+        return round(float(value), digits)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def run_ffprobe(path: Path) -> dict[str, Any]:
@@ -59,18 +72,35 @@ def run_ffprobe(path: Path) -> dict[str, Any]:
         "-v",
         "error",
         "-show_entries",
-        "format=duration:format_tags",
+        "format=duration:format_tags:stream=codec_type,sample_rate,channels,duration",
         "-of",
         "json",
         str(path),
     ]
     result = subprocess.run(command, check=True, capture_output=True, text=True)
-    data: dict[str, Any] = json.loads(result.stdout or "{}")
-    format_data = data.get("format", {})
-    return format_data if isinstance(format_data, dict) else {}
+    data = json.loads(result.stdout or "{}")
+    return data if isinstance(data, dict) else {}
 
 
-def decode_mono_f32(path: Path, sample_rate: int = BEAT_ANALYSIS_SAMPLE_RATE) -> tuple[array.array, int]:
+def format_section(probe: dict[str, Any]) -> dict[str, Any]:
+    section = probe.get("format", {})
+    return section if isinstance(section, dict) else {}
+
+
+def audio_stream(probe: dict[str, Any]) -> dict[str, Any]:
+    for stream in probe.get("streams", []):
+        if isinstance(stream, dict) and stream.get("codec_type") == "audio":
+            return stream
+    return {}
+
+
+def decode_mono_np(path: Path, sample_rate: int) -> np.ndarray:
+    stat = path.stat()
+    cache_key = (str(path.resolve()), sample_rate, int(stat.st_mtime_ns), int(stat.st_size))
+    cached = DECODE_CACHE.get(cache_key)
+    if cached is not None:
+        return cached.copy()
+
     command = [
         "ffmpeg",
         "-v",
@@ -86,15 +116,13 @@ def decode_mono_f32(path: Path, sample_rate: int = BEAT_ANALYSIS_SAMPLE_RATE) ->
         "-",
     ]
     result = subprocess.run(command, check=True, capture_output=True)
-    samples = array.array("f")
-    samples.frombytes(result.stdout)
-    if sys.byteorder != "little":
-        samples.byteswap()
-    return samples, sample_rate
+    audio = np.frombuffer(result.stdout, dtype="<f4").astype(np.float32, copy=True)
+    DECODE_CACHE[cache_key] = audio
+    return audio.copy()
 
 
-def get_tags(format_data: dict[str, Any]) -> dict[str, str]:
-    tags = format_data.get("tags", {})
+def get_tags(probe: dict[str, Any]) -> dict[str, str]:
+    tags = format_section(probe).get("tags", {})
     return tags if isinstance(tags, dict) else {}
 
 
@@ -104,7 +132,6 @@ def get_first_tag(tags: dict[str, str], names: tuple[str, ...]) -> str | None:
         value = tags.get(name)
         if value not in (None, ""):
             return str(value)
-
         value = lowered.get(name.lower())
         if value not in (None, ""):
             return str(value)
@@ -114,175 +141,487 @@ def get_first_tag(tags: dict[str, str], names: tuple[str, ...]) -> str | None:
 def normalize_bpm(value: str | None) -> int | float | None:
     if value is None:
         return None
-
     try:
         number = float(value)
     except ValueError:
         return None
-
     return int(number) if number.is_integer() else number
 
 
 def normalize_duration(value: Any) -> int | float | None:
-    if value is None:
+    if value in (None, ""):
         return None
-
     try:
-        seconds = float(value)
+        number = float(value)
     except (TypeError, ValueError):
         return None
-
-    return int(seconds) if seconds.is_integer() else round(seconds, 3)
-
-
-class BiquadLowPass:
-    def __init__(self, sample_rate: float, frequency_hz: float, q: float = 1.0) -> None:
-        omega = 2.0 * math.pi * frequency_hz / sample_rate
-        sin_omega = math.sin(omega)
-        cos_omega = math.cos(omega)
-        alpha = sin_omega / (2.0 * q)
-
-        raw_b0 = (1.0 - cos_omega) * 0.5
-        raw_b1 = 1.0 - cos_omega
-        raw_b2 = (1.0 - cos_omega) * 0.5
-        raw_a0 = 1.0 + alpha
-        raw_a1 = -2.0 * cos_omega
-        raw_a2 = 1.0 - alpha
-
-        self.b0 = raw_b0 / raw_a0
-        self.b1 = raw_b1 / raw_a0
-        self.b2 = raw_b2 / raw_a0
-        self.a1 = raw_a1 / raw_a0
-        self.a2 = raw_a2 / raw_a0
-        self.x1 = 0.0
-        self.x2 = 0.0
-        self.y1 = 0.0
-        self.y2 = 0.0
-
-    def process(self, value: float) -> float:
-        output = (self.b0 * value) + (self.b1 * self.x1) + (self.b2 * self.x2) - (self.a1 * self.y1) - (self.a2 * self.y2)
-        self.x2 = self.x1
-        self.x1 = value
-        self.y2 = self.y1
-        self.y1 = output
-        return output
+    return int(number) if number.is_integer() else number
 
 
-def get_peaks_at_threshold(channel_data: list[float], threshold: float, sample_rate: int) -> list[int]:
-    peaks: list[int] = []
-    last_value_was_above_threshold = False
-    skip_samples = max(1, int(sample_rate / 4.0) - 1)
-    index = 0
-
-    while index < len(channel_data):
-        if channel_data[index] > threshold:
-            last_value_was_above_threshold = True
-        elif last_value_was_above_threshold:
-            last_value_was_above_threshold = False
-            peaks.append(index - 1)
-            index += skip_samples
-        index += 1
-
-    if last_value_was_above_threshold:
-        peaks.append(len(channel_data) - 1)
-
-    return peaks
+def file_metadata(probe: dict[str, Any]) -> dict[str, Any]:
+    section = format_section(probe)
+    return {
+        "duration": normalize_duration(section.get("duration")),
+        "tags": get_tags(probe),
+    }
 
 
-def count_intervals_between_nearby_peaks(peaks: list[int]) -> dict[int, list[int]]:
-    interval_buckets: dict[int, list[int]] = {}
-
-    for peak_index, peak in enumerate(peaks):
-        length = min(len(peaks) - peak_index, 10)
-        for nearby_index in range(1, length):
-            interval = peaks[peak_index + nearby_index] - peak
-            interval_buckets.setdefault(interval, []).append(peak)
-
-    return interval_buckets
+def filename_tokens(path: Path) -> tuple[str, ...]:
+    cleaned = "".join(character.lower() if character.isalnum() else " " for character in path.stem)
+    return tuple(token for token in cleaned.split() if token)
 
 
-def group_neighbors_by_tempo(
-    interval_buckets: dict[int, list[int]],
-    sample_rate: int,
-    min_tempo: float = 90.0,
-    max_tempo: float = 180.0,
-) -> list[dict[str, Any]]:
-    tempo_buckets: list[dict[str, Any]] = []
+def contains_token_phrase(tokens: tuple[str, ...], phrase: tuple[str, ...]) -> bool:
+    if not tokens:
+        return False
+    compact = "".join(tokens)
+    if len(phrase) == 1:
+        return phrase[0] in tokens or phrase[0] == compact
+    phrase_len = len(phrase)
+    return any(tokens[index : index + phrase_len] == phrase for index in range(0, len(tokens) - phrase_len + 1))
 
-    for interval, peaks in interval_buckets.items():
-        if interval <= 0:
+
+def classify_stem(path: Path) -> str | None:
+    tokens = filename_tokens(path)
+    for stem_name, phrases in STEM_MATCHES:
+        if any(contains_token_phrase(tokens, phrase) for phrase in phrases):
+            return stem_name
+    return None
+
+
+def package_stem_name(stem_name: str) -> str | None:
+    if stem_name == "drum":
+        return "drums"
+    if stem_name in {"kick", "bass", "synth", "vocals", "other", "mix"}:
+        return stem_name
+    return None
+
+
+def pick_stem_files(directory: Path) -> dict[str, Path]:
+    stems: dict[str, Path] = {}
+    for path in sorted(directory.iterdir()):
+        if not path.is_file() or path.suffix.lower() not in AUDIO_EXTENSIONS:
             continue
-
-        theoretical_tempo = 60.0 / (float(interval) / float(sample_rate))
-        while theoretical_tempo < min_tempo:
-            theoretical_tempo *= 2.0
-        while theoretical_tempo > max_tempo and max_tempo > 0.0:
-            theoretical_tempo /= 2.0
-        if theoretical_tempo < min_tempo:
-            continue
-
-        found_tempo = False
-        score = float(len(peaks))
-        for tempo_bucket in tempo_buckets:
-            if tempo_bucket["tempo"] == theoretical_tempo:
-                tempo_bucket["score"] += float(len(peaks))
-                tempo_bucket["peaks"].extend(peaks)
-                found_tempo = True
-
-            if theoretical_tempo - 0.5 < tempo_bucket["tempo"] < theoretical_tempo + 0.5:
-                tempo_difference = abs(tempo_bucket["tempo"] - theoretical_tempo) * 2.0
-                score += (1.0 - tempo_difference) * float(len(tempo_bucket["peaks"]))
-                tempo_bucket["score"] += (1.0 - tempo_difference) * float(len(peaks))
-
-        if not found_tempo:
-            tempo_buckets.append({"tempo": theoretical_tempo, "score": score, "peaks": list(peaks)})
-
-    return sorted(tempo_buckets, key=lambda bucket: bucket["score"], reverse=True)
+        stem_name = classify_stem(path)
+        if stem_name is not None and stem_name not in stems:
+            stems[stem_name] = path
+    return stems
 
 
-def make_beat_times(offset_seconds: float, seconds_per_beat: float, duration_seconds: float) -> list[float]:
-    beat_times: list[float] = []
-    if seconds_per_beat <= 0.0 or duration_seconds <= 0.0:
-        return beat_times
+def pick_primary_track_file(directory: Path) -> Path | None:
+    stem_files = pick_stem_files(directory)
+    if "mix" in stem_files:
+        return stem_files["mix"]
 
-    beat_time = offset_seconds
-    while beat_time <= duration_seconds:
-        if beat_time >= 0.0:
-            beat_times.append(round(beat_time, 6))
-        beat_time += seconds_per_beat
+    audio_files = [path for path in sorted(directory.iterdir()) if path.is_file() and path.suffix.lower() in AUDIO_EXTENSIONS]
+    if not audio_files:
+        return None
 
-    return beat_times
+    classified = set(stem_files.values())
+    unclassified = [path for path in audio_files if path not in classified]
+    candidates = unclassified or [stem_files[name] for name in ("instrumental", "no_vocals", "no_drum", "no_bass") if name in stem_files]
+    if not candidates:
+        candidates = audio_files
+    return max(candidates, key=lambda path: path.stat().st_size)
 
 
-def average_sample_energy(samples: array.array | None, sample_rate: int, start_seconds: float, end_seconds: float) -> float:
-    if samples is None or sample_rate <= 0 or end_seconds <= start_seconds:
+def make_stem_info(name: str, path: Path, audio: np.ndarray, target_sr: int) -> StemInfo:
+    probe = run_ffprobe(path)
+    stream = audio_stream(probe)
+    duration = normalize_duration(format_section(probe).get("duration"))
+    original_sample_rate = int(stream.get("sample_rate") or target_sr)
+    channels = int(stream.get("channels") or 1)
+    original_num_samples = int(round(float(duration) * original_sample_rate)) if duration is not None else int(len(audio))
+    return StemInfo(
+        name=name,
+        path=str(path),
+        original_sample_rate=original_sample_rate,
+        target_sample_rate=target_sr,
+        original_num_samples=original_num_samples,
+        resampled_num_samples=int(len(audio)),
+        duration_s=float(len(audio)) / float(target_sr),
+        channels=channels,
+    )
+
+
+def add_detector_stem(
+    stems: dict[str, np.ndarray],
+    stem_info: dict[str, StemInfo],
+    name: str,
+    path: Path,
+    target_sr: int,
+) -> None:
+    if name in stems:
+        return
+    audio = decode_mono_np(path, target_sr)
+    stems[name] = audio
+    stem_info[name] = make_stem_info(name, path, audio, target_sr)
+
+
+def load_detector_stems(stem_files: dict[str, Path], primary_track: Path | None, target_sr: int) -> tuple[dict[str, np.ndarray], dict[str, StemInfo]]:
+    stems: dict[str, np.ndarray] = {}
+    stem_info: dict[str, StemInfo] = {}
+
+    if primary_track is not None and primary_track.exists():
+        add_detector_stem(stems, stem_info, "mix", primary_track, target_sr)
+
+    for source_name, path in stem_files.items():
+        target_name = package_stem_name(source_name)
+        if target_name is not None:
+            add_detector_stem(stems, stem_info, target_name, path, target_sr)
+
+    harmonic_sources = [
+        stem_files.get("synth"),
+        stem_files.get("other"),
+        stem_files.get("instrumental"),
+        stem_files.get("no_vocals"),
+        stem_files.get("no_drum"),
+        stem_files.get("no_bass"),
+    ]
+    for path in harmonic_sources:
+        if path is not None and path.exists() and "synth" not in stems:
+            add_detector_stem(stems, stem_info, "synth", path, target_sr)
+            break
+    synth_path = Path(stem_info["synth"].path) if "synth" in stem_info else None
+    for path in harmonic_sources:
+        if path is not None and path.exists() and "other" not in stems and path != synth_path:
+            add_detector_stem(stems, stem_info, "other", path, target_sr)
+            break
+
+    if not stems:
+        raise ValueError("No stems could be prepared for edm_phrase_detect.")
+    return stems, stem_info
+
+
+def make_config(backend: str, target_sr: int) -> Config:
+    return Config(
+        target_sr=target_sr,
+        backend=backend,
+        beats_per_bar=DEFAULT_BEATS_PER_BAR,
+        min_phrase_bars=MIN_PHRASE_BARS,
+        allowed_phrase_bars=ALLOWED_PHRASE_LENGTHS,
+        preferred_phrase_bars=PREFERRED_PHRASE_LENGTHS,
+    )
+
+
+def seconds_per_beat(beats: list[float]) -> float:
+    if len(beats) < 2:
         return 0.0
+    beat_times = np.asarray(beats, dtype=np.float64)
+    beat_indices = np.arange(len(beat_times), dtype=np.float64)
+    centered_indices = beat_indices - float(np.mean(beat_indices))
+    centered_times = beat_times - float(np.mean(beat_times))
+    denominator = float(np.dot(centered_indices, centered_indices))
+    if denominator > 0.0:
+        slope = float(np.dot(centered_indices, centered_times) / denominator)
+        if slope > 0.0:
+            return slope
+    return float((beat_times[-1] - beat_times[0]) / max(1, len(beat_times) - 1))
 
-    start_index = min(len(samples), max(0, int(math.floor(start_seconds * sample_rate))))
-    end_index = min(len(samples), max(0, int(math.ceil(end_seconds * sample_rate))))
+
+def bar_beat_indices(result: PhraseResult, debug: dict[str, Any], beats_per_bar: int = DEFAULT_BEATS_PER_BAR) -> list[int]:
+    beat_events = debug.get("beat_events", [])
+    if isinstance(beat_events, list):
+        downbeat_indices: list[int] = []
+        for event in beat_events:
+            if not isinstance(event, dict):
+                continue
+            try:
+                if int(event.get("beat_in_bar", 0)) == 1:
+                    downbeat_indices.append(int(event.get("beat_index", len(downbeat_indices) * beats_per_bar)))
+            except (TypeError, ValueError):
+                continue
+        if len(downbeat_indices) >= len(result.bars):
+            return downbeat_indices[: len(result.bars)]
+
+    beats = [float(value) for value in result.beats]
+    indices: list[int] = []
+    for fallback_index, bar_time in enumerate(result.bars):
+        if beats:
+            closest = min(range(len(beats)), key=lambda beat_index: abs(beats[beat_index] - float(bar_time)))
+            if abs(beats[closest] - float(bar_time)) <= max(0.05, seconds_per_beat(beats) * 0.5):
+                indices.append(int(closest))
+                continue
+        indices.append(int(fallback_index * beats_per_bar))
+    return indices
+
+
+def beat_index_for_bar(bar_indices: list[int], bar_index: int, beats_per_bar: int = DEFAULT_BEATS_PER_BAR) -> int:
+    if 0 <= bar_index < len(bar_indices):
+        return int(bar_indices[bar_index])
+    if bar_index >= len(bar_indices) and bar_indices:
+        return int(bar_indices[-1] + ((bar_index - len(bar_indices) + 1) * beats_per_bar))
+    return int(max(0, bar_index) * beats_per_bar)
+
+
+def detector_result_to_beat_grid(result: PhraseResult, debug: dict[str, Any]) -> dict[str, Any]:
+    metadata = result.metadata
+    beats = [float(value) for value in result.beats]
+    beats_per_bar = int(metadata.get("beats_per_bar") or DEFAULT_BEATS_PER_BAR)
+    bar_indices = bar_beat_indices(result, debug, beats_per_bar)
+    return {
+        "tempo": round_float(result.bpm, 6),
+        "bpm": max(1, round(float(result.bpm))),
+        "first_beat_offset_seconds": round_float(beats[0] if beats else 0.0),
+        "first_bar_offset_seconds": round_float(result.bars[0] if result.bars else (beats[0] if beats else 0.0)),
+        "seconds_per_beat": round_float(seconds_per_beat(beats), 9),
+        "beats_per_bar": beats_per_bar,
+        "duration_seconds": round_float(result.duration_s, 3),
+        "beat_times_seconds": [round_float(value) for value in beats],
+        "downbeats": [round_float(value) for value in result.downbeats],
+        "bars": [round_float(value) for value in result.bars],
+        "bar_beat_indices": bar_indices,
+        "beat_events": debug.get("beat_events", []),
+        "beat_confidence": round_float(metadata.get("beat_confidence", 0.0), 4),
+        "downbeat_confidence": round_float(metadata.get("downbeat_confidence", 0.0), 4),
+        "backend": metadata.get("selected_backend", debug.get("selected_backend", "unknown")),
+    }
+
+
+def feature_arrays(debug: dict[str, Any]) -> dict[str, Any]:
+    features = debug.get("features", {})
+    arrays = features.get("feature_arrays", {}) if isinstance(features, dict) else {}
+    return arrays if isinstance(arrays, dict) else {}
+
+
+def one_dimensional(values: Any, expected_len: int) -> list[float] | None:
+    if not isinstance(values, list) or len(values) != expected_len:
+        return None
+    if any(isinstance(value, list) for value in values):
+        return None
+    return [float(value) for value in values]
+
+
+def feature_slice(debug: dict[str, Any], name: str, start_bar: int, end_bar: int) -> list[float]:
+    values = one_dimensional(feature_arrays(debug).get(name), max(0, int(debug.get("features", {}).get("num_bars", 0))))
+    if values is None:
+        return []
+    start = max(0, min(len(values), start_bar))
+    end = max(start, min(len(values), end_bar))
+    return values[start:end]
+
+
+def mean_feature(debug: dict[str, Any], name: str, start_bar: int, end_bar: int) -> float:
+    values = feature_slice(debug, name, start_bar, end_bar)
+    return float(np.mean(values)) if values else 0.0
+
+
+def max_feature(debug: dict[str, Any], name: str, start_bar: int, end_bar: int) -> float:
+    values = feature_slice(debug, name, start_bar, end_bar)
+    return max(values) if values else 0.0
+
+
+def phrase_role_flags(debug: dict[str, Any], start_bar: int, end_bar: int) -> dict[str, bool]:
+    drums = max(mean_feature(debug, "drums_presence", start_bar, end_bar), mean_feature(debug, "kick_presence", start_bar, end_bar))
+    return {
+        "has_drums": drums > 0.35,
+        "has_bass": mean_feature(debug, "bass_presence", start_bar, end_bar) > 0.35,
+        "has_vocal": max(mean_feature(debug, "vocal_presence", start_bar, end_bar), mean_feature(debug, "vocal_activity_ratio", start_bar, end_bar)) > 0.30,
+        "has_melody": mean_feature(debug, "harmonic_presence", start_bar, end_bar) > 0.30,
+    }
+
+
+def segment_energy(debug: dict[str, Any], start_bar: int, end_bar: int) -> float:
+    values = [
+        mean_feature(debug, "kick_presence", start_bar, end_bar),
+        mean_feature(debug, "drums_presence", start_bar, end_bar),
+        mean_feature(debug, "bass_presence", start_bar, end_bar),
+        mean_feature(debug, "harmonic_presence", start_bar, end_bar),
+        mean_feature(debug, "vocal_presence", start_bar, end_bar),
+    ]
+    present = [value for value in values if value > 0.0]
+    return round_float(float(np.mean(present)) if present else 0.0, 4)
+
+
+def label_reason(debug: dict[str, Any], start_bar: int, end_bar: int) -> dict[str, float]:
+    return {
+        "kick_presence": round_float(mean_feature(debug, "kick_presence", start_bar, end_bar), 4),
+        "drums_presence": round_float(mean_feature(debug, "drums_presence", start_bar, end_bar), 4),
+        "bass_presence": round_float(mean_feature(debug, "bass_presence", start_bar, end_bar), 4),
+        "harmonic_presence": round_float(mean_feature(debug, "harmonic_presence", start_bar, end_bar), 4),
+        "vocal_activity": round_float(mean_feature(debug, "vocal_activity_ratio", start_bar, end_bar), 4),
+        "entry_count": round_float(mean_feature(debug, "instrumentation_entry_count", start_bar, end_bar), 4),
+        "exit_count": round_float(mean_feature(debug, "instrumentation_exit_count", start_bar, end_bar), 4),
+    }
+
+
+def label_confidence(reason: dict[str, float], confidence: float) -> float:
+    spread = max(reason.values(), default=0.0) - min(reason.values(), default=0.0)
+    return round_float(max(0.25, min(1.0, 0.55 * confidence + 0.45 * spread)), 4)
+
+
+def scalar_bar_features(result: PhraseResult, debug: dict[str, Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    bar_table = debug.get("bar_table", [])
+    arrays = feature_arrays(debug)
+    num_bars = len(result.bars)
+    bar_indices = bar_beat_indices(result, debug)
+    for index, start_s in enumerate(result.bars):
+        source = bar_table[index] if isinstance(bar_table, list) and index < len(bar_table) and isinstance(bar_table[index], dict) else {}
+        row: dict[str, Any] = {
+            "bar": index,
+            "display_bar_number": index + 1,
+            "beat_index": beat_index_for_bar(bar_indices, index),
+            "start_s": round_float(start_s),
+            "end_s": round_float(source.get("end_s", result.bars[index + 1] if index + 1 < num_bars else result.duration_s)),
+        }
+        for name, values in arrays.items():
+            one_d = one_dimensional(values, num_bars)
+            if one_d is not None:
+                row[name] = round_float(one_d[index], 4)
+        rows.append(row)
+    return rows
+
+
+def boundary_candidates(result: PhraseResult, debug: dict[str, Any]) -> list[dict[str, Any]]:
+    scores = debug.get("candidate_boundary_scores", [])
+    reasons = debug.get("candidate_reasons", [])
+    bar_indices = bar_beat_indices(result, debug)
+    candidates: list[dict[str, Any]] = []
+    for index, bar_time in enumerate(result.bars):
+        reason = reasons[index] if isinstance(reasons, list) and index < len(reasons) and isinstance(reasons[index], dict) else {}
+        score = scores[index] if isinstance(scores, list) and index < len(scores) else 0.0
+        candidates.append(
+            {
+                "bar_index": index,
+                "display_bar_number": index + 1,
+                "beat_index": beat_index_for_bar(bar_indices, index),
+                "time_s": round_float(bar_time),
+                "score": round_float(score, 4),
+                "reason": {str(key): round_float(value, 4) for key, value in reason.items()},
+            }
+        )
+    return candidates
+
+
+def selected_boundaries(result: PhraseResult, candidates: list[dict[str, Any]], bar_indices: list[int]) -> list[dict[str, Any]]:
+    selected: list[dict[str, Any]] = []
+    for boundary in result.boundaries:
+        internal_bar = max(0, int(boundary.bar_index) - 1)
+        reason = {str(key): round_float(value, 4) for key, value in boundary.reason.items()}
+        selected.append(
+            {
+                "bar_index": internal_bar,
+                "display_bar_number": internal_bar + 1,
+                "beat_index": beat_index_for_bar(bar_indices, internal_bar),
+                "time_s": round_float(boundary.time_s),
+                "score": round_float(candidates[internal_bar]["score"] if internal_bar < len(candidates) else boundary.confidence, 4),
+                "confidence": round_float(boundary.confidence, 4),
+                "reason": reason,
+            }
+        )
+
+    final_bar = len(result.bars)
+    if not selected or selected[-1]["bar_index"] != final_bar:
+        selected.append(
+            {
+                "bar_index": final_bar,
+                "display_bar_number": final_bar + 1,
+                "beat_index": beat_index_for_bar(bar_indices, final_bar),
+                "time_s": round_float(result.duration_s),
+                "score": 1.0,
+                "confidence": 1.0,
+                "reason": {"final_boundary": 1.0},
+            }
+        )
+    return selected
+
+
+def phrase_reason_for_end(selected: list[dict[str, Any]], end_bar: int, start_bar: int) -> dict[str, float]:
+    for boundary in selected:
+        if int(boundary.get("bar_index", -1)) == end_bar:
+            return dict(boundary.get("reason", {}))
+    for boundary in selected:
+        if int(boundary.get("bar_index", -1)) == start_bar:
+            return dict(boundary.get("reason", {}))
+    return {}
+
+
+def detector_result_to_phrases(result: PhraseResult, debug: dict[str, Any], selected: list[dict[str, Any]], bar_indices: list[int]) -> list[dict[str, Any]]:
+    phrases: list[dict[str, Any]] = []
+    for segment in result.segments:
+        start_bar = max(0, int(segment.start_bar) - 1)
+        end_bar = max(start_bar + 1, int(segment.end_bar))
+        beat_index = beat_index_for_bar(bar_indices, start_bar)
+        beat_count = max(1, beat_index_for_bar(bar_indices, end_bar) - beat_index)
+        reason = phrase_reason_for_end(selected, end_bar, start_bar)
+        label_data = label_reason(debug, start_bar, end_bar)
+        confidence = round_float(segment.confidence, 4)
+        phrase_type = "groove" if segment.label == "unknown" else segment.label
+        phrases.append(
+            {
+                "type": phrase_type,
+                "beat_index": beat_index,
+                "beat_count": beat_count,
+                "start_bar": start_bar,
+                "end_bar": end_bar,
+                "display_start_bar_number": start_bar + 1,
+                "display_end_bar_number": end_bar,
+                "start_s": round_float(segment.start_s),
+                "end_s": round_float(segment.end_s),
+                "energy": segment_energy(debug, start_bar, end_bar),
+                "confidence": confidence,
+                "label_confidence": label_confidence(label_data, confidence),
+                "label_reason": label_data,
+                **phrase_role_flags(debug, start_bar, end_bar),
+                "reason": reason,
+            }
+        )
+    return phrases
+
+
+def detector_result_to_phrase_analysis(result: PhraseResult, debug: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    bar_indices = bar_beat_indices(result, debug)
+    candidates = boundary_candidates(result, debug)
+    selected = selected_boundaries(result, candidates, bar_indices)
+    phrases = detector_result_to_phrases(result, debug, selected, bar_indices)
+    metadata = result.metadata
+    missing_stems = list(metadata.get("missing_stems", []))
+    warnings = list(metadata.get("warnings", []))
+    if missing_stems:
+        warnings.append("Missing stems: " + ", ".join(missing_stems))
+
+    phrase_analysis = {
+        "status": "stem_novelty_dp_v1",
+        "method": "offline_stem_barwise_v1",
+        "backend": metadata.get("selected_backend", debug.get("selected_backend", "unknown")),
+        "degraded": bool(missing_stems) or float(metadata.get("grid_confidence", 1.0)) < 0.5,
+        "schema_version": result.schema_version,
+        "beats_per_bar": int(metadata.get("beats_per_bar") or DEFAULT_BEATS_PER_BAR),
+        "bars_per_phrase_prior": list(ALLOWED_PHRASE_LENGTHS),
+        "preferred_phrase_lengths": list(PREFERRED_PHRASE_LENGTHS),
+        "bar_index_convention": "0_based_start_inclusive_end_exclusive",
+        "available_stems": list(metadata.get("stems_used", [])),
+        "missing_stems": missing_stems,
+        "warnings": warnings,
+        "bar_features": scalar_bar_features(result, debug),
+        "boundary_candidates": candidates,
+        "selected_boundaries": selected,
+        "segments": [dict(phrase) for phrase in phrases],
+        "debug": {
+            "backend": metadata.get("selected_backend", debug.get("selected_backend", "unknown")),
+            "available_stems": list(metadata.get("stems_used", [])),
+            "missing_stems": missing_stems,
+            "warnings": warnings,
+            "beat_confidence": round_float(metadata.get("beat_confidence", 0.0), 4),
+            "downbeat_confidence": round_float(metadata.get("downbeat_confidence", 0.0), 4),
+            "grid_confidence": round_float(metadata.get("grid_confidence", 0.0), 4),
+            "alignment_shifts_ms": metadata.get("alignment_shifts_ms", {}),
+            "dp_selected_boundary_indices": debug.get("dp_selected_boundary_indices", []),
+            "rejected_strong_candidates": debug.get("rejected_strong_candidates", []),
+            "final_confidence_components": debug.get("final_confidence_components", {}),
+        },
+    }
+    return phrase_analysis, phrases
+
+
+def peak_for_pixel(samples: np.ndarray, start_index: int, end_index: int) -> float:
     if end_index <= start_index:
+        end_index = start_index + 1
+    window = samples[max(0, start_index) : min(len(samples), end_index)]
+    if len(window) == 0:
         return 0.0
-
-    total = 0.0
-    for index in range(start_index, end_index):
-        value = float(samples[index])
-        total += value * value
-
-    return math.sqrt(total / float(end_index - start_index))
-
-
-def peak_for_pixel(samples: array.array, start_index: int, end_index: int) -> float:
-    if end_index <= start_index or not samples:
-        return 0.0
-
-    end_index = min(end_index, len(samples))
-    start_index = max(0, min(start_index, end_index))
-    peak = 0.0
-    step = max(1, (end_index - start_index) // 256)
-    for index in range(start_index, end_index, step):
-        peak = max(peak, abs(float(samples[index])))
-
-    return min(1.0, peak)
+    return float(min(1.0, np.max(np.abs(window))))
 
 
 def render_phrase_analysis_image(
@@ -290,6 +629,7 @@ def render_phrase_analysis_image(
     primary_track: Path,
     stem_files: dict[str, Path],
     beat_grid: dict[str, Any] | None,
+    phrase_analysis: dict[str, Any] | None = None,
     width: int = 1800,
     height: int = 720,
 ) -> None:
@@ -302,13 +642,14 @@ def render_phrase_analysis_image(
         ("bass", stem_files.get("bass"), (105, 210, 105)),
         ("vocals", stem_files.get("vocals"), (235, 95, 165)),
     ]
-    decoded: list[tuple[str, array.array, int, tuple[int, int, int]]] = []
+    decoded: list[tuple[str, np.ndarray, tuple[int, int, int]]] = []
     for label, path, color in track_rows:
         if path is None or not path.exists():
             continue
-        samples, sample_rate = decode_mono_f32(path)
-        if samples:
-            decoded.append((label, samples, sample_rate, color))
+        samples = decode_mono_np(path, DEFAULT_WAVEFORM_SAMPLE_RATE)
+        if len(samples):
+            peak = max(1e-8, float(np.max(np.abs(samples))))
+            decoded.append((label, samples / peak, color))
 
     if not decoded:
         return
@@ -323,27 +664,21 @@ def render_phrase_analysis_image(
     row_gap = 12
     row_height = (bottom - top - (row_gap * (len(decoded) - 1))) // len(decoded)
     duration_seconds = float(beat_grid.get("duration_seconds") or 0.0)
-    seconds_per_beat = float(beat_grid.get("seconds_per_beat") or 0.0)
-    first_beat_offset = float(beat_grid.get("first_beat_offset_seconds") or 0.0)
     beats_per_bar = int(beat_grid.get("beats_per_bar") or DEFAULT_BEATS_PER_BAR)
 
     draw.rectangle((0, 0, width, height), fill=(12, 28, 34, 255))
     draw.line((left, top - 12, right, top - 12), fill=(65, 205, 230, 210), width=2)
     draw.line((left, bottom + 10, right, bottom + 10), fill=(65, 205, 230, 210), width=2)
 
-    if duration_seconds > 0.0 and seconds_per_beat > 0.0:
-        beat = 0
-        beat_time = first_beat_offset
-        while beat_time <= duration_seconds:
-            x = left + int((beat_time / duration_seconds) * timeline_width)
+    if duration_seconds > 0.0:
+        for index, beat_time in enumerate(beat_grid.get("beat_times_seconds", [])):
+            x = left + int((float(beat_time) / duration_seconds) * timeline_width)
             if left <= x <= right:
-                is_bar = beat % max(1, beats_per_bar) == 0
+                is_bar = index % max(1, beats_per_bar) == 0
                 color = (220, 235, 238, 175) if is_bar else (115, 145, 150, 80)
                 draw.line((x, top - 4, x, bottom + 4), fill=color, width=2 if is_bar else 1)
-            beat += 1
-            beat_time += seconds_per_beat
 
-    for row_index, (label, samples, sample_rate, color) in enumerate(decoded):
+    for row_index, (label, samples, color) in enumerate(decoded):
         row_top = top + row_index * (row_height + row_gap)
         row_bottom = row_top + row_height
         center = (row_top + row_bottom) // 2
@@ -360,620 +695,91 @@ def render_phrase_analysis_image(
             start_index = int(normalized_start * duration_samples)
             end_index = int(normalized_end * duration_samples)
             peak = peak_for_pixel(samples, start_index, end_index)
-            y_top = center - int(peak * half_height)
-            y_bottom = center + int(peak * half_height)
-            points.append((x, y_top))
-            lower_points.append((x, y_bottom))
+            points.append((x, center - int(peak * half_height)))
+            lower_points.append((x, center + int(peak * half_height)))
 
-        polygon = points + list(reversed(lower_points))
-        draw.polygon(polygon, fill=(*color, 115))
+        draw.polygon(points + list(reversed(lower_points)), fill=(*color, 115))
         draw.line(points, fill=(*color, 230), width=1)
         draw.line(lower_points, fill=(*color, 230), width=1)
         draw.text((6, row_top + 6), label, fill=(210, 225, 228, 220))
 
+    if duration_seconds > 0.0 and phrase_analysis is not None:
+        for bar_time in beat_grid.get("bars", []):
+            x = left + int((float(bar_time) / duration_seconds) * timeline_width)
+            if left <= x <= right:
+                draw.line((x, top - 8, x, bottom + 8), fill=(230, 245, 245, 135), width=1)
+
+        for candidate in phrase_analysis.get("boundary_candidates", []):
+            x = left + int((float(candidate.get("time_s", 0.0)) / duration_seconds) * timeline_width)
+            if left <= x <= right:
+                alpha = int(60 + 120 * max(0.0, min(1.0, float(candidate.get("score", 0.0)))))
+                draw.line((x, top, x, bottom), fill=(255, 210, 80, alpha), width=1)
+
+        for boundary in phrase_analysis.get("selected_boundaries", []):
+            x = left + int((float(boundary.get("time_s", 0.0)) / duration_seconds) * timeline_width)
+            if left <= x <= right:
+                draw.line((x, top - 12, x, bottom + 12), fill=(255, 70, 90, 245), width=3)
+
+        for segment in phrase_analysis.get("segments", []):
+            start_s = float(segment.get("start_s", 0.0))
+            end_s = float(segment.get("end_s", start_s))
+            label = str(segment.get("type", ""))
+            if label:
+                x = left + int((((start_s + end_s) * 0.5) / duration_seconds) * timeline_width)
+                if left <= x <= right:
+                    draw.text((x - 18, bottom + 16), label, fill=(245, 250, 252, 245))
+
+        candidates = phrase_analysis.get("boundary_candidates", [])
+        if candidates:
+            curve_top = bottom + 24
+            curve_bottom = height - 10
+            previous_point: tuple[int, int] | None = None
+            for candidate in candidates:
+                x = left + int((float(candidate.get("time_s", 0.0)) / duration_seconds) * timeline_width)
+                score = max(0.0, min(1.0, float(candidate.get("score", 0.0))))
+                y = curve_bottom - int(score * max(1, curve_bottom - curve_top))
+                if previous_point is not None:
+                    draw.line((previous_point[0], previous_point[1], x, y), fill=(255, 185, 48, 235), width=2)
+                previous_point = (x, y)
+
     image.save(output_path)
 
 
-def normalize_bar_member(bars: list[dict[str, float]], name: str) -> None:
-    maximum = max((bar[name] for bar in bars), default=0.0)
-    if maximum <= 0.0:
-        return
-
-    for bar in bars:
-        bar[name] = max(0.0, min(1.0, bar[name] / maximum))
-
-
-def average_bar_member(bars: list[dict[str, float]], start_bar: int, length_bars: int, name: str) -> float:
-    if not bars or length_bars <= 0:
-        return 0.0
-
-    start = max(0, min(len(bars), start_bar))
-    end = max(0, min(len(bars), start_bar + length_bars))
-    if end <= start:
-        return 0.0
-
-    return sum(bar[name] for bar in bars[start:end]) / float(end - start)
-
-
-def mean_window_member(windows: list[dict[str, float | int]], name: str) -> float:
-    if not windows:
-        return 0.0
-
-    return sum(float(window[name]) for window in windows) / float(len(windows))
-
-
-def contiguous_segments(flags: list[bool], beats_per_bar: int, label: str) -> list[dict[str, Any]]:
-    segments: list[dict[str, Any]] = []
-    start: int | None = None
-
-    for index, flag in enumerate(flags + [False]):
-        if flag and start is None:
-            start = index
-        elif not flag and start is not None:
-            length_bars = index - start
-            segments.append(
-                {
-                    "label": label,
-                    "start_bar": start,
-                    "length_bars": length_bars,
-                    "beat_index": start * beats_per_bar,
-                    "beat_count": length_bars * beats_per_bar,
-                }
-            )
-            start = None
-
-    return segments
-
-
-def bar_boundaries(bar_count: int, beats_per_bar: int) -> list[int]:
-    boundaries = [bar * beats_per_bar for bar in range(0, bar_count + 1)]
-    final_boundary = bar_count * beats_per_bar
-    if not boundaries or boundaries[-1] != final_boundary:
-        boundaries.append(final_boundary)
-    return boundaries
-
-
-def phrase_grid_boundaries(bar_count: int, beats_per_bar: int, bars_per_phrase: int) -> list[int]:
-    boundaries = [bar * beats_per_bar for bar in range(0, bar_count + 1, bars_per_phrase)]
-    final_boundary = bar_count * beats_per_bar
-    if not boundaries or boundaries[-1] != final_boundary:
-        boundaries.append(final_boundary)
-    return boundaries
-
-
-def significant_change_candidates(
-    bar_features: list[dict[str, Any]],
-    beats_per_bar: int,
-) -> list[dict[str, Any]]:
-    candidates: list[dict[str, Any]] = []
-    if len(bar_features) < 2:
-        return candidates
-
-    for index in range(1, len(bar_features)):
-        previous = bar_features[index - 1]
-        current = bar_features[index]
-        next_bar = bar_features[index + 1] if index + 1 < len(bar_features) else current
-
-        deltas = {
-            "drums": float(current["drums"]) - float(previous["drums"]),
-            "bass": float(current["bass"]) - float(previous["bass"]),
-            "vocal": float(current["vocal"]) - float(previous["vocal"]),
-            "total": float(current["total"]) - float(previous["total"]),
-        }
-        sustained_total_change = abs(float(next_bar["total"]) - float(previous["total"]))
-        sustained_vocal_change = bool(previous["vocal_active"]) != bool(current["vocal_active"])
-        dropout_resolves = bool(previous["dropout_or_silence"]) and not bool(current["dropout_or_silence"])
-        dropout_starts = not bool(previous["dropout_or_silence"]) and bool(current["dropout_or_silence"])
-        bass_or_drum_return = (deltas["bass"] > 0.30 or deltas["drums"] > 0.30) and float(current["total"]) > 0.30
-
-        score = (
-            abs(deltas["total"]) * 1.25
-            + abs(deltas["vocal"]) * 1.10
-            + abs(deltas["bass"]) * 0.75
-            + abs(deltas["drums"]) * 0.55
-            + sustained_total_change * 0.75
-            + (0.45 if sustained_vocal_change else 0.0)
-            + (0.40 if dropout_resolves else 0.0)
-            + (0.22 if dropout_starts else 0.0)
-            + (0.30 if bass_or_drum_return else 0.0)
-        )
-
-        reasons: list[str] = []
-        if sustained_vocal_change:
-            reasons.append("vocal_state_changed")
-        if dropout_resolves:
-            reasons.append("dropout_resolved")
-        if dropout_starts:
-            reasons.append("dropout_started")
-        if bass_or_drum_return:
-            reasons.append("drum_or_bass_return")
-        if abs(deltas["total"]) > 0.18:
-            reasons.append("large_energy_change")
-
-        if score >= 0.58 or reasons:
-            candidates.append(
-                {
-                    "bar": int(current["bar"]),
-                    "beat_index": int(current["beat_index"]),
-                    "score": round(score, 4),
-                    "reasons": reasons,
-                    "before": {
-                        "drums": previous["drums"],
-                        "bass": previous["bass"],
-                        "vocal": previous["vocal"],
-                        "total": previous["total"],
-                        "vocal_active": previous["vocal_active"],
-                        "dropout_or_silence": previous["dropout_or_silence"],
-                    },
-                    "after": {
-                        "drums": current["drums"],
-                        "bass": current["bass"],
-                        "vocal": current["vocal"],
-                        "total": current["total"],
-                        "vocal_active": current["vocal_active"],
-                        "dropout_or_silence": current["dropout_or_silence"],
-                    },
-                }
-            )
-
-    return sorted(candidates, key=lambda item: item["score"], reverse=True)[:32]
-
-
-def extract_phrase_features(stem_files: dict[str, Path], beat_grid: dict[str, Any] | None) -> dict[str, Any]:
-    if beat_grid is None:
-        return {"status": "missing_beat_grid", "bars_per_phrase": BARS_PER_PHRASE, "windows": []}
-
-    seconds_per_beat = float(beat_grid.get("seconds_per_beat") or 0.0)
-    beats_per_bar = int(beat_grid.get("beats_per_bar") or DEFAULT_BEATS_PER_BAR)
-    first_beat_offset = float(beat_grid.get("first_beat_offset_seconds") or 0.0)
-    duration_seconds = float(beat_grid.get("duration_seconds") or 0.0)
-    seconds_per_bar = seconds_per_beat * float(max(1, beats_per_bar))
-    if seconds_per_bar <= 0.0 or duration_seconds <= 0.0:
-        return {"status": "invalid_beat_grid", "bars_per_phrase": BARS_PER_PHRASE, "windows": []}
-
-    decoded: dict[str, array.array | None] = {"drum": None, "bass": None, "vocals": None}
-    sample_rate = BEAT_ANALYSIS_SAMPLE_RATE
-    for stem_name in decoded:
-        path = stem_files.get(stem_name)
-        if path is None:
-            continue
-        decoded[stem_name], sample_rate = decode_mono_f32(path)
-
-    bar_count = max(1, int(math.floor((duration_seconds - first_beat_offset) / seconds_per_bar)))
-    bars: list[dict[str, float]] = []
-    for bar_index in range(bar_count):
-        start_seconds = first_beat_offset + (float(bar_index) * seconds_per_bar)
-        end_seconds = min(duration_seconds, start_seconds + seconds_per_bar)
-        bars.append(
-            {
-                "drums": average_sample_energy(decoded["drum"], sample_rate, start_seconds, end_seconds),
-                "bass": average_sample_energy(decoded["bass"], sample_rate, start_seconds, end_seconds),
-                "vocal": average_sample_energy(decoded["vocals"], sample_rate, start_seconds, end_seconds),
-            }
-        )
-
-    for name in ("drums", "bass", "vocal"):
-        normalize_bar_member(bars, name)
-
-    for bar in bars:
-        bar["total"] = (bar["drums"] * 0.38) + (bar["bass"] * 0.38) + (bar["vocal"] * 0.24)
-
-    mean_total = sum(bar["total"] for bar in bars) / float(len(bars)) if bars else 0.0
-    mean_vocal = sum(bar["vocal"] for bar in bars) / float(len(bars)) if bars else 0.0
-    vocal_on_threshold = max(0.20, mean_vocal * 1.20)
-    vocal_keep_threshold = max(0.12, vocal_on_threshold * 0.58)
-    dropout_threshold = max(0.12, mean_total * 0.45)
-    vocal_flags: list[bool] = []
-    dropout_flags: list[bool] = []
-    vocal_is_active = False
-
-    bar_features: list[dict[str, Any]] = []
-    for bar_index, bar in enumerate(bars):
-        previous_total = bars[bar_index - 1]["total"] if bar_index > 0 else bar["total"]
-        next_total = bars[bar_index + 1]["total"] if bar_index + 1 < len(bars) else bar["total"]
-        vocal_is_active = bar["vocal"] >= (vocal_keep_threshold if vocal_is_active else vocal_on_threshold)
-        is_dropout = (
-            bar["total"] <= dropout_threshold
-            or (bar["drums"] < 0.18 and bar["bass"] < 0.18 and bar["vocal"] < 0.18)
-            or (previous_total - bar["total"] > 0.24 and next_total < previous_total - 0.18)
-        )
-        vocal_flags.append(vocal_is_active)
-        dropout_flags.append(is_dropout)
-        bar_features.append(
-            {
-                "bar": bar_index,
-                "beat_index": bar_index * beats_per_bar,
-                "beat_count": beats_per_bar,
-                "drums": round(bar["drums"], 4),
-                "bass": round(bar["bass"], 4),
-                "vocal": round(bar["vocal"], 4),
-                "total": round(bar["total"], 4),
-                "delta_from_previous": round(bar["total"] - previous_total, 4),
-                "vocal_active": vocal_is_active,
-                "dropout_or_silence": is_dropout,
-            }
-        )
-
-    vocal_segments = contiguous_segments(vocal_flags, beats_per_bar, "vocal_active")
-    dropout_events = contiguous_segments(dropout_flags, beats_per_bar, "dropout_or_silence")
-
-    bars_per_phrase = max(4, BARS_PER_PHRASE)
-    legal_boundaries = bar_boundaries(bar_count, beats_per_bar)
-    phrase_boundaries = phrase_grid_boundaries(bar_count, beats_per_bar, bars_per_phrase)
-    windows: list[dict[str, Any]] = []
-    for start_bar in range(0, bar_count, bars_per_phrase):
-        length_bars = min(bars_per_phrase, bar_count - start_bar)
-        if length_bars < 4:
-            break
-
-        drums = average_bar_member(bars, start_bar, length_bars, "drums")
-        bass = average_bar_member(bars, start_bar, length_bars, "bass")
-        vocal = average_bar_member(bars, start_bar, length_bars, "vocal")
-        total = average_bar_member(bars, start_bar, length_bars, "total")
-        window = {
-            "beat_index": start_bar * beats_per_bar,
-            "beat_count": length_bars * beats_per_bar,
-            "start_bar": start_bar,
-            "length_bars": length_bars,
-            "drums": round(drums, 4),
-            "bass": round(bass, 4),
-            "vocal": round(vocal, 4),
-            "total": round(total, 4),
-            "previous_total": round(average_bar_member(bars, start_bar - bars_per_phrase, bars_per_phrase, "total"), 4),
-            "next_total": round(average_bar_member(bars, start_bar + bars_per_phrase, bars_per_phrase, "total"), 4),
-            "novelty": 0.0,
-        }
-        if windows:
-            previous = windows[-1]
-            window["novelty"] = (
-                abs(float(window["drums"]) - float(previous["drums"])) * 0.32
-                + abs(float(window["bass"]) - float(previous["bass"])) * 0.38
-                + abs(float(window["vocal"]) - float(previous["vocal"])) * 0.30
-            )
-            window["novelty"] = round(float(window["novelty"]), 4)
-        windows.append(window)
-
-    change_candidates = significant_change_candidates(bar_features, beats_per_bar)
-    phrase_candidates = [
-        {
-            "index": index,
-            "beat_index": int(window["beat_index"]),
-            "beat_count": int(window["beat_count"]),
-            "start_bar": int(window["start_bar"]),
-            "length_bars": int(window["length_bars"]),
-            "drums": window["drums"],
-            "bass": window["bass"],
-            "vocal": window["vocal"],
-            "total": window["total"],
-            "novelty": window["novelty"],
-        }
-        for index, window in enumerate(windows)
-    ]
-
-    return {
-        "status": "features_ready",
-        "bars_per_phrase": bars_per_phrase,
-        "beats_per_bar": beats_per_bar,
-        "window_beat_count": bars_per_phrase * beats_per_bar,
-        "feature_notes": (
-            "Values are normalized RMS energy. windows are coarse 8-bar candidates; bar_features are 1-bar detail. "
-            "A phrase is a coherent electronic music arrangement section; boundaries happen where musical roles change significantly. "
-            "change_candidates are diagnostic only; generated phrases stay on the naive 8-bar grid."
-        ),
-        "vocal_thresholds": {
-            "on": round(vocal_on_threshold, 4),
-            "keep": round(vocal_keep_threshold, 4),
-        },
-        "dropout_threshold": round(dropout_threshold, 4),
-        "bar_features": bar_features,
-        "vocal_segments": vocal_segments,
-        "dropout_events": dropout_events,
-        "legal_boundaries": legal_boundaries,
-        "phrase_boundaries": phrase_boundaries,
-        "phrase_candidates": phrase_candidates,
-        "change_candidates": change_candidates,
-        "windows": windows,
-    }
-
-
-def is_core_energy(window: dict[str, Any], mean_total: float) -> bool:
-    return (
-        float(window.get("drums", 0.0)) > 0.48
-        and float(window.get("bass", 0.0)) > 0.44
-        and float(window.get("total", 0.0)) > max(0.50, mean_total + 0.04)
-    )
-
-
-def has_low_to_high_context(windows: list[dict[str, Any]], index: int, mean_total: float) -> bool:
-    if index == 0:
-        return False
-
-    window = windows[index]
-    previous = windows[index - 1]
-    previous2 = windows[index - 2 if index >= 2 else index - 1]
-    previous_was_sparse = (
-        float(previous.get("total", 0.0)) < mean_total - 0.08
-        or float(previous.get("drums", 0.0)) < 0.40
-        or float(previous.get("bass", 0.0)) < 0.38
-    )
-    bass_return = (
-        float(window.get("bass", 0.0)) > 0.46
-        and (
-            float(window.get("bass", 0.0)) > float(previous.get("bass", 0.0)) + 0.14
-            or float(previous.get("bass", 0.0)) < 0.36
-        )
-    )
-    drum_return = (
-        float(window.get("drums", 0.0)) > 0.48
-        and (
-            float(window.get("drums", 0.0)) > float(previous.get("drums", 0.0)) + 0.12
-            or float(previous.get("drums", 0.0)) < 0.38
-        )
-    )
-    rising_into_here = (
-        float(previous.get("total", 0.0)) > float(previous2.get("total", 0.0)) + 0.04
-        and float(window.get("total", 0.0)) > float(previous.get("total", 0.0)) + 0.02
-    )
-
-    return (
-        previous_was_sparse and (bass_return or drum_return or float(window.get("novelty", 0.0)) > 0.12)
-    ) or (
-        (bass_return or drum_return) and float(window.get("novelty", 0.0)) > 0.10
-    ) or rising_into_here
-
-
-def is_drop_candidate(
-    windows: list[dict[str, Any]],
-    index: int,
-    mean_total: float,
-    intro_window_count: int,
-) -> bool:
-    if index < intro_window_count or index >= len(windows):
-        return False
-
-    window = windows[index]
-    previous = windows[index - 1]
-    stem_return = (
-        float(window.get("bass", 0.0)) > 0.46
-        and (
-            float(window.get("bass", 0.0)) > float(previous.get("bass", 0.0)) + 0.12
-            or float(previous.get("bass", 0.0)) < 0.36
-        )
-    ) or (
-        float(window.get("drums", 0.0)) > 0.48
-        and (
-            float(window.get("drums", 0.0)) > float(previous.get("drums", 0.0)) + 0.10
-            or float(previous.get("drums", 0.0)) < 0.38
-        )
-    )
-
-    return is_core_energy(window, mean_total) and stem_return and has_low_to_high_context(windows, index, mean_total)
-
-
-def classify_windows(windows: list[dict[str, Any]]) -> list[str]:
-    labels = ["groove"] * len(windows)
-    if not windows:
-        return labels
-
-    mean_total = mean_window_member(windows, "total")
-    intro_window_count = min(len(windows), 4 if len(windows) >= 6 else 1)
-    outro_window_count = min(len(windows), 2 if len(windows) >= 8 else 1)
-    drop_candidates = [False] * len(windows)
-    previous_drop_index: int | None = None
-
-    for index in range(len(windows)):
-        far_enough_from_previous_drop = previous_drop_index is None or index > previous_drop_index + 1
-        drop_candidates[index] = (
-            far_enough_from_previous_drop
-            and is_drop_candidate(windows, index, mean_total, intro_window_count)
-        )
-
-        if drop_candidates[index]:
-            previous_drop_index = index
-
-    for index, window in enumerate(windows):
-        is_intro = index < intro_window_count or (
-            index < intro_window_count + 2
-            and float(window.get("vocal", 0.0)) < 0.28
-            and not drop_candidates[index]
-            and float(window.get("novelty", 0.0)) < 0.18
-        )
-        is_outro = index + outro_window_count >= len(windows) and float(window.get("vocal", 0.0)) < 0.38
-        next_is_drop = index + 1 < len(windows) and drop_candidates[index + 1]
-        next2_is_drop = index + 2 < len(windows) and drop_candidates[index + 2]
-        is_rising = float(window.get("next_total", 0.0)) > float(window.get("total", 0.0)) + 0.08
-        fell_from_previous = float(window.get("previous_total", 0.0)) > float(window.get("total", 0.0)) + 0.12
-
-        if is_intro:
-            labels[index] = "intro"
-        elif is_outro:
-            labels[index] = "outro"
-        elif drop_candidates[index]:
-            labels[index] = "drop"
-        elif next_is_drop:
-            labels[index] = "build"
-        elif next2_is_drop and (
-            float(window.get("drums", 0.0)) < 0.46
-            or float(window.get("bass", 0.0)) < 0.38
-            or float(window.get("vocal", 0.0)) > 0.34
-        ):
-            labels[index] = "breakdown"
-        elif (
-            float(window.get("drums", 0.0)) < 0.34
-            or float(window.get("bass", 0.0)) < 0.30
-        ) and (float(window.get("vocal", 0.0)) > 0.30 or fell_from_previous):
-            labels[index] = "breakdown"
-        elif is_rising and float(window.get("drums", 0.0)) > 0.34:
-            labels[index] = "build"
-        elif float(window.get("total", 0.0)) < max(0.20, mean_total - 0.22):
-            labels[index] = "fx"
-        elif (
-            float(window.get("drums", 0.0)) > 0.52
-            and float(window.get("bass", 0.0)) < 0.34
-            and float(window.get("vocal", 0.0)) < 0.34
-        ):
-            labels[index] = "loop"
-        else:
-            labels[index] = "groove"
-
-    return labels
-
-
-def combined_energy(window: dict[str, Any]) -> float:
-    energy = (
-        float(window.get("drums", 0.0)) * 0.38
-        + float(window.get("bass", 0.0)) * 0.38
-        + float(window.get("vocal", 0.0)) * 0.24
-    )
-    return max(0.0, min(1.0, energy))
-
-
-def build_naive_phrases(phrase_analysis: dict[str, Any]) -> list[dict[str, Any]]:
-    windows = [
-        window for window in phrase_analysis.get("windows", [])
-        if isinstance(window, dict)
-    ]
-    labels = classify_windows(windows)
-    phrases: list[dict[str, Any]] = []
-
-    for index, window in enumerate(windows):
-        phrase_type = labels[index] if index < len(labels) else "groove"
-        phrases.append(
-            {
-                "type": phrase_type,
-                "beat_index": int(window.get("beat_index", 0)),
-                "beat_count": int(window.get("beat_count", 0)),
-                "energy": round(combined_energy(window), 4),
-                "has_drums": float(window.get("drums", 0.0)) > 0.32,
-                "has_bass": float(window.get("bass", 0.0)) > 0.36,
-                "has_vocal": float(window.get("vocal", 0.0)) > 0.28,
-                "has_melody": phrase_type in {"build", "breakdown", "drop"},
-            }
-        )
-
-    return phrases
-
-
-def analyze_beats(path: Path, duration_seconds: float | None) -> dict[str, Any] | None:
-    samples, sample_rate = decode_mono_f32(path)
-    if not samples:
-        return None
-
-    low_pass = BiquadLowPass(float(sample_rate), LOW_PASS_FREQUENCY_HZ)
-    channel_data = [low_pass.process(float(sample)) for sample in samples]
-    maximum_value = max(channel_data, default=0.0)
-    if maximum_value <= 0.25:
-        return None
-
-    minimum_threshold = maximum_value * 0.3
-    threshold = maximum_value - (maximum_value * 0.05)
-    peaks: list[int] = []
-    while len(peaks) < MINIMUM_NUMBER_OF_PEAKS and threshold >= minimum_threshold:
-        peaks = get_peaks_at_threshold(channel_data, threshold, sample_rate)
-        threshold -= maximum_value * 0.05
-
-    tempo_buckets = group_neighbors_by_tempo(count_intervals_between_nearby_peaks(peaks), sample_rate)
-    if not tempo_buckets:
-        return None
-
-    best_bucket = tempo_buckets[0]
-    tempo = max(1.0, float(best_bucket["tempo"]))
-    seconds_per_beat = 60.0 / tempo
-    sorted_peaks = sorted(best_bucket["peaks"])
-    offset_seconds = (float(sorted_peaks[0]) / float(sample_rate)) if sorted_peaks else 0.0
-    while offset_seconds > seconds_per_beat:
-        offset_seconds -= seconds_per_beat
-
-    if duration_seconds is None or duration_seconds <= 0.0:
-        duration_seconds = float(len(samples)) / float(sample_rate)
-
-    return {
-        "tempo": round(tempo, 6),
-        "bpm": max(1, round(tempo)),
-        "first_beat_offset_seconds": round(offset_seconds, 6),
-        "seconds_per_beat": round(seconds_per_beat, 9),
-        "beats_per_bar": DEFAULT_BEATS_PER_BAR,
-        "duration_seconds": round(duration_seconds, 3),
-        "beat_times_seconds": make_beat_times(offset_seconds, seconds_per_beat, duration_seconds),
-    }
-
-
-def file_metadata(format_data: dict[str, Any]) -> dict[str, Any]:
-    tags = get_tags(format_data)
-    metadata: dict[str, Any] = {"tags": tags}
-    duration = normalize_duration(format_data.get("duration"))
-    if duration is not None:
-        metadata["duration"] = duration
-    return metadata
-
-
-def filename_tokens(path: Path) -> tuple[str, ...]:
-    normalized = path.stem.lower().replace("-", "_")
-    return tuple(token for token in normalized.split("_") if token)
-
-
-def contains_token_phrase(tokens: tuple[str, ...], phrase: tuple[str, ...]) -> bool:
-    if not phrase or len(phrase) > len(tokens):
-        return False
-
-    for start_index in range(0, len(tokens) - len(phrase) + 1):
-        if tokens[start_index : start_index + len(phrase)] == phrase:
-            return True
-
-    return False
-
-
-def classify_stem(path: Path) -> str | None:
-    tokens = filename_tokens(path)
-    for stem_name, patterns in STEM_MATCHES:
-        if any(contains_token_phrase(tokens, pattern) for pattern in patterns):
-            return stem_name
-    return None
-
-
-def pick_primary_track_file(directory: Path) -> Path | None:
-    audio_files = [
-        path
-        for path in sorted(directory.iterdir())
-        if path.is_file() and path.suffix.lower() in AUDIO_EXTENSIONS
-    ]
-    for path in audio_files:
-        if classify_stem(path) is None:
-            return path
-    return None
-
-
-def pick_stem_files(directory: Path) -> dict[str, Path]:
-    stems: dict[str, Path] = {}
-    for path in sorted(directory.iterdir()):
-        if not path.is_file() or path.suffix.lower() not in AUDIO_EXTENSIONS:
-            continue
-
-        stem_name = classify_stem(path)
-        if stem_name and stem_name not in stems:
-            stems[stem_name] = path
-
-    return stems
-
-
-def build_mixdesk(directory: Path) -> dict[str, Any] | None:
+def build_detector_outputs(
+    stem_files: dict[str, Path],
+    primary_track: Path,
+    backend: str,
+    target_sr: int,
+) -> tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]]]:
+    stems, stem_info = load_detector_stems(stem_files, primary_track, target_sr)
+    result, debug, _, _, _ = detect_loaded_stems(stems, target_sr, make_config(backend, target_sr), stem_info)
+    beat_grid = detector_result_to_beat_grid(result, debug)
+    phrase_analysis, phrases = detector_result_to_phrase_analysis(result, debug)
+    return beat_grid, phrase_analysis, phrases
+
+
+def build_mixdesk(
+    directory: Path,
+    backend: str = DEFAULT_ANALYSIS_BACKEND,
+    target_sr: int = DEFAULT_ANALYSIS_SAMPLE_RATE,
+) -> dict[str, Any] | None:
     stem_files = pick_stem_files(directory)
     if not stem_files:
         return None
 
-    primary_track = pick_primary_track_file(directory)
+    primary_track = pick_primary_track_file(directory) or stem_files.get("mix")
     if primary_track is None:
         return None
 
     metadata: dict[str, dict[str, Any]] = {}
     entries: dict[str, dict[str, Any]] = {}
-    primary_metadata = run_ffprobe(primary_track) if primary_track else {}
-    primary_tags = get_tags(primary_metadata)
+    primary_probe = run_ffprobe(primary_track)
+    primary_tags = get_tags(primary_probe)
     track_name = get_first_tag(primary_tags, TITLE_TAGS) or directory.name
-    duration = normalize_duration(primary_metadata.get("duration"))
+    duration = normalize_duration(format_section(primary_probe).get("duration"))
     original = {
-        "file": primary_track.name if primary_track else None,
-        "metadata": file_metadata(primary_metadata),
+        "file": primary_track.name,
+        "metadata": file_metadata(primary_probe),
     }
 
     for stem_name in ENTRY_STEMS:
@@ -982,36 +788,32 @@ def build_mixdesk(directory: Path) -> dict[str, Any] | None:
             entries[stem_name] = {"file": None, "key": None}
             continue
 
-        format_data = run_ffprobe(path)
-        tags = get_tags(format_data)
-        metadata[stem_name] = format_data
+        probe = run_ffprobe(path)
+        tags = get_tags(probe)
+        metadata[stem_name] = probe
         entries[stem_name] = {
             "file": path.name,
             "key": get_first_tag(tags, KEY_TAGS),
-            "duration": normalize_duration(format_data.get("duration")),
+            "duration": normalize_duration(format_section(probe).get("duration")),
         }
 
-    drum_metadata = metadata.get("drum", {})
-    drum_tags = get_tags(drum_metadata)
+    drum_tags = get_tags(metadata.get("drum", {}))
     bpm = normalize_bpm(get_first_tag(drum_tags, BPM_TAGS))
-    if duration is None:
-        duration = normalize_duration(drum_metadata.get("duration"))
-    beat_grid = analyze_beats(stem_files["drum"], float(duration) if duration is not None else None) if "drum" in stem_files else None
-    if bpm is None and beat_grid is not None:
+    if duration is None and "drum" in metadata:
+        duration = normalize_duration(format_section(metadata["drum"]).get("duration"))
+
+    beat_grid, phrase_analysis, phrases = build_detector_outputs(stem_files, primary_track, backend, target_sr)
+    if bpm is None:
         bpm = beat_grid["tempo"]
-    phrase_analysis = extract_phrase_features(stem_files, beat_grid)
+
     phrase_image_path = directory / PHRASE_ANALYSIS_IMAGE_NAME
-    render_phrase_analysis_image(phrase_image_path, primary_track, stem_files, beat_grid)
+    render_phrase_analysis_image(phrase_image_path, primary_track, stem_files, beat_grid, phrase_analysis)
     if phrase_image_path.exists():
         phrase_analysis["image"] = phrase_image_path.name
-    phrases = build_naive_phrases(phrase_analysis)
-    if phrase_analysis.get("status") == "features_ready":
-        phrase_analysis["status"] = "naive_python"
-    phrase_analysis["method"] = "ported_cpp_phrase_analyzer"
 
     return {
         "track_name": track_name,
-        "duration": duration,
+        "duration": duration if duration is not None else beat_grid.get("duration_seconds"),
         "bpm": bpm,
         "beat_grid": beat_grid,
         "phrase_analysis": phrase_analysis,
@@ -1029,20 +831,20 @@ def iter_target_directories(root: Path) -> list[Path]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="Create mixdesk.json in each subdirectory that contains audio stems."
+    parser = argparse.ArgumentParser(description="Create mixdesk.json in each subdirectory that contains audio stems.")
+    parser.add_argument("root", nargs="?", default=".", type=Path, help="Root folder to scan. Defaults to the current directory.")
+    parser.add_argument("--dry-run", action="store_true", help="Print files that would be written without changing them.")
+    parser.add_argument(
+        "--backend",
+        default=DEFAULT_ANALYSIS_BACKEND,
+        choices=("auto", "librosa", "madmom", "essentia"),
+        help="Beat/downbeat backend. Defaults to auto.",
     )
     parser.add_argument(
-        "root",
-        nargs="?",
-        default=".",
-        type=Path,
-        help="Root folder to scan. Defaults to the current directory.",
-    )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Print files that would be written without changing them.",
+        "--target-sr",
+        default=DEFAULT_ANALYSIS_SAMPLE_RATE,
+        type=int,
+        help=f"Analysis sample rate for offline stem features. Defaults to {DEFAULT_ANALYSIS_SAMPLE_RATE}.",
     )
     args = parser.parse_args()
 
@@ -1054,16 +856,17 @@ def main() -> int:
     written = 0
 
     for directory in iter_target_directories(root):
-        mixdesk = build_mixdesk(directory)
+        mixdesk = build_mixdesk(directory, backend=args.backend, target_sr=args.target_sr)
         if mixdesk is None:
             continue
 
         output_path = directory / "mixdesk.json"
+        serializable = to_jsonable(mixdesk)
         if args.dry_run:
             print(f"would write {output_path}")
-            print(json.dumps(mixdesk, indent=2))
+            print(json.dumps(serializable, indent=2))
         else:
-            output_path.write_text(json.dumps(mixdesk, indent=2) + "\n", encoding="utf-8")
+            output_path.write_text(json.dumps(serializable, indent=2) + "\n", encoding="utf-8")
             print(f"wrote {output_path}")
         written += 1
 

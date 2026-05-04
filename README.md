@@ -2,6 +2,54 @@
 
 This is a small JUCE/C++20 prototype for a touch-first 3-deck DJ phrase alignment workspace. It intentionally does not imitate CDJs, turntables, or a mixer surface. The main object is musical time: three horizontal deck lanes show phrase blocks against a shared bar grid.
 
+## EDM Phrase Detector Package
+
+This repo also contains `edm_phrase_detect`, an offline Python package for DJ-useful phrase detection on stem folders.
+
+Run it with:
+
+```powershell
+python -m edm_phrase_detect.cli --track-dir .\track --out .\phrases.json
+```
+
+Optional debug output:
+
+```powershell
+python -m edm_phrase_detect.cli `
+  --track-dir .\track `
+  --out .\phrases.json `
+  --plot .\phrases.png `
+  --debug-json .\debug.json `
+  --backend auto `
+  --target-sr 44100 `
+  --min-phrase-bars 4 `
+  --allowed-phrase-bars 4,8,16,32 `
+  --preferred-phrase-bars 8,16
+```
+
+Expected stem filenames are `kick.wav`, `drums.wav`, `bass.wav`, `synth.wav`, `vocals.wav`, `other.wav`, and `mix.wav`. Missing stems are allowed; available feature groups are reweighted during boundary scoring.
+
+## Generating Track Metadata
+
+MixDesk loads prepared track metadata from `mixdesk.json` files. Generate those files offline with Python before opening tracks in the app:
+
+```powershell
+python -m pip install -e .
+python Tools\generate_mixdesk.py D:\tracks --backend auto --target-sr 44100
+```
+
+`Tools\generate_mixdesk.py` scans the root folder recursively, classifies audio files by filename tokens, reads tags with `ffprobe`, analyzes stems with `edm_phrase_detect`, and writes or overwrites one `mixdesk.json` beside each detected stem set. It also writes `mixdesk_phrase_analysis.png` next to each generated JSON when a waveform preview can be rendered.
+
+Useful variants:
+
+```powershell
+python Tools\generate_mixdesk.py D:\tracks --dry-run
+python Tools\generate_mixdesk.py D:\tracks --backend librosa --target-sr 22050
+python C:\Users\paula\Documents\Projects\mixdesk\Tools\generate_mixdesk.py .
+```
+
+FFmpeg must be on `PATH` because the generator uses `ffmpeg` for decoding and `ffprobe` for metadata. The generated JSON contains the app-facing `beat_grid`, phrase blocks, phrase-analysis candidates, selected boundaries, labels, confidence scores, reasons, available/missing stems, and backend/debug metadata. Recognized stems include `drum`/`drums`, `kick`, `bass`, `synth`, `vocals`, `other`, `mix`, `instrumental`, and LALALAI-style complements such as `no_bass`, `no_drum`, and `no_vocals`.
+
 ## What It Demonstrates
 
 - A custom `PhraseWorkspace` JUCE component with a horizontal phrase grid, deck lanes, phrase blocks, role labels, playhead, status row, and large touch-friendly controls.
@@ -65,7 +113,7 @@ Default contents:
 tracksRoot=D:\tracks
 ```
 
-Track loading, stem preparation, and waveform analysis run on a background thread. Beat detection and naive phrase generation are handled by `Tools/generate_mixdesk.py` when preparing `mixdesk.json`. The UI thread receives only the prepared result, so opening a track picker or loading a new deck should not block the interface or do heavy work in the audio callback.
+Track loading, stem preparation, and waveform analysis run on a background thread. Beat detection, downbeat/bar grids, and stem-aware phrase detection are generated offline by `Tools/generate_mixdesk.py` through the `edm_phrase_detect` package when preparing `mixdesk.json`. The UI thread receives only the prepared result, so opening a track picker or loading a new deck should not block the interface or do heavy work in the audio callback.
 
 ## Stem Reconciliation Design
 

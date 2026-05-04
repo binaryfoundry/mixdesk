@@ -529,6 +529,66 @@ bool testBeatGridMapsAudioStartBeforeFirstBeat()
         && expect(std::abs(durationBars - 5.0) < 0.0001,
             "duration in bars uses the track beatgrid");
 }
+
+bool testBeatGridUsesDetectedBeatTimesForNonLinearMapping()
+{
+    mixdesk::model::BeatGrid beatGrid;
+    beatGrid.tempo = 120.0;
+    beatGrid.bpm = 120;
+    beatGrid.secondsPerBeat = 0.5;
+    beatGrid.beatsPerBar = 4;
+    beatGrid.firstBeatOffsetSeconds = 0.25;
+    beatGrid.durationSeconds = 4.5;
+    beatGrid.beatTimesSeconds = { 0.25, 0.75, 1.25, 1.75, 2.30, 2.85, 3.40, 3.95 };
+    beatGrid.beatInBars = { 1, 2, 3, 4, 1, 2, 3, 4 };
+    beatGrid.barTimesSeconds = { 0.25, 2.30 };
+
+    constexpr auto launchOffsetBars = 12;
+    const auto secondBarTime = mixdesk::model::gridBarToTrackTime(beatGrid, launchOffsetBars, launchOffsetBars + 1.0);
+    const auto secondBarPosition = mixdesk::model::trackTimeToGridBar(beatGrid, launchOffsetBars, 2.30);
+    const auto postBarPosition = mixdesk::model::trackTimeToGridBar(beatGrid, launchOffsetBars, 2.575);
+    const auto audioStartBar = mixdesk::model::trackAudioStartBar(beatGrid, launchOffsetBars);
+    const auto expectedAudioStartBar = launchOffsetBars - (0.25 / 2.05);
+    const auto expectedPostBarPosition = launchOffsetBars + 1.0 + (0.275 / 2.05);
+
+    return expect(std::abs(secondBarTime - 2.30) < 0.0001,
+            "bar-to-time lookup uses JSON bar times")
+        && expect(std::abs(secondBarPosition - (launchOffsetBars + 1.0)) < 0.0001,
+            "time-to-bar lookup lands JSON bars on integer bars")
+        && expect(std::abs(postBarPosition - expectedPostBarPosition) < 0.0001,
+            "time-to-bar lookup interpolates within JSON bar intervals")
+        && expect(std::abs(audioStartBar - expectedAudioStartBar) < 0.0001,
+            "lead-in extrapolation uses the first JSON bar interval");
+}
+
+bool testBeatGridUsesJsonBarsForOffbeatPickup()
+{
+    mixdesk::model::BeatGrid beatGrid;
+    beatGrid.tempo = 120.0;
+    beatGrid.bpm = 120;
+    beatGrid.secondsPerBeat = 0.5;
+    beatGrid.beatsPerBar = 4;
+    beatGrid.firstBeatOffsetSeconds = 0.0;
+    beatGrid.durationSeconds = 5.0;
+    beatGrid.beatTimesSeconds = { 0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0 };
+    beatGrid.beatInBars = { 3, 4, 1, 2, 3, 4, 1, 2, 3 };
+    beatGrid.barTimesSeconds = { 1.0, 3.0 };
+
+    constexpr auto launchOffsetBars = 8;
+    const auto firstJsonBarTime = mixdesk::model::gridBarToTrackTime(beatGrid, launchOffsetBars, launchOffsetBars);
+    const auto firstJsonBarPosition = mixdesk::model::trackTimeToGridBar(beatGrid, launchOffsetBars, 1.0);
+    const auto fileStartBar = mixdesk::model::trackAudioStartBar(beatGrid, launchOffsetBars);
+    const auto pickupBeatBar = mixdesk::model::trackTimeToGridBar(beatGrid, launchOffsetBars, 0.0);
+
+    return expect(std::abs(firstJsonBarTime - 1.0) < 0.0001,
+            "grid launch maps to first JSON bar, not first JSON beat")
+        && expect(std::abs(firstJsonBarPosition - launchOffsetBars) < 0.0001,
+            "first JSON bar lands on the launch bar")
+        && expect(std::abs(fileStartBar - (launchOffsetBars - 0.5)) < 0.0001,
+            "audio before first JSON bar is represented as pickup bars")
+        && expect(std::abs(pickupBeatBar - (launchOffsetBars - 0.5)) < 0.0001,
+            "offbeat pickup beat is not promoted to a downbeat");
+}
 } // namespace
 
 int main()
@@ -547,6 +607,8 @@ int main()
     failures += testWorkspaceBpmOnlyAdoptsFirstLoadedTrack() ? 0 : 1;
     failures += testLoadingTrackDoesNotChangeStemVolumes() ? 0 : 1;
     failures += testBeatGridMapsAudioStartBeforeFirstBeat() ? 0 : 1;
+    failures += testBeatGridUsesDetectedBeatTimesForNonLinearMapping() ? 0 : 1;
+    failures += testBeatGridUsesJsonBarsForOffbeatPickup() ? 0 : 1;
 
     if (failures == 0)
     {

@@ -1296,7 +1296,6 @@ void PhraseWorkspace::drawBeatMarkers(juce::Graphics& g)
         if (deck.loadedTrack.has_value())
             lane = getLoadedTrackWaveformBounds(deckIndex);
 
-        const auto beatsPerBar = std::max(1, deck.beatGrid->beatsPerBar);
         const auto showSubBeats = pixelsPerBar >= 40.0f;
 
         for (std::size_t beatIndex = 0; beatIndex < deck.beatGrid->beatTimesSeconds.size(); ++beatIndex)
@@ -1307,7 +1306,7 @@ void PhraseWorkspace::drawBeatMarkers(juce::Graphics& g)
                 continue;
 
             const auto x = xForBar(markerBar);
-            const auto isDownbeat = beatIndex % static_cast<std::size_t>(beatsPerBar) == 0;
+            const auto isDownbeat = deck.beatGrid->beatInBars[beatIndex] == 1;
 
             if (! isDownbeat && ! showSubBeats)
                 continue;

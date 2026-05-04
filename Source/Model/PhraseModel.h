@@ -142,6 +142,8 @@ struct BeatGrid
     int beatsPerBar { 4 };
     double durationSeconds { 0.0 };
     std::vector<double> beatTimesSeconds;
+    std::vector<int> beatInBars;
+    std::vector<double> barTimesSeconds;
 };
 
 struct LoadedTrack
