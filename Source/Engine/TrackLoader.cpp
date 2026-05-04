@@ -73,6 +73,15 @@ juce::String readStringProperty(const juce::DynamicObject* object, const juce::I
     return value.isString() ? value.toString() : juce::String();
 }
 
+bool readBoolProperty(const juce::DynamicObject* object, const juce::Identifier& propertyName)
+{
+    if (object == nullptr)
+        return false;
+
+    const auto value = object->getProperty(propertyName);
+    return value.isBool() ? static_cast<bool>(value) : false;
+}
+
 double readDoubleProperty(const juce::DynamicObject* object, const juce::Identifier& propertyName)
 {
     if (object == nullptr)
@@ -122,6 +131,69 @@ std::optional<model::BeatGrid> readBeatGrid(const juce::DynamicObject* root)
         return std::nullopt;
 
     return beatGrid;
+}
+
+model::PhraseType readPhraseType(const juce::String& value)
+{
+    const auto normalized = value.toLowerCase();
+
+    if (normalized == "intro")
+        return model::PhraseType::Intro;
+    if (normalized == "breakdown")
+        return model::PhraseType::Breakdown;
+    if (normalized == "build")
+        return model::PhraseType::Build;
+    if (normalized == "drop")
+        return model::PhraseType::Drop;
+    if (normalized == "outro")
+        return model::PhraseType::Outro;
+    if (normalized == "loop")
+        return model::PhraseType::Loop;
+    if (normalized == "fx")
+        return model::PhraseType::FX;
+
+    return model::PhraseType::Groove;
+}
+
+std::vector<model::PhraseBlock> readPhraseBlocks(const juce::DynamicObject* root, const std::optional<model::BeatGrid>& beatGrid)
+{
+    std::vector<model::PhraseBlock> phraseBlocks;
+    if (root == nullptr)
+        return phraseBlocks;
+
+    const auto phrasesValue = root->getProperty("phrases");
+    auto* phrases = phrasesValue.getArray();
+    if (phrases == nullptr)
+        return phraseBlocks;
+
+    const auto beatsPerBar = std::max(1, beatGrid.has_value() ? beatGrid->beatsPerBar : 4);
+    phraseBlocks.reserve(static_cast<std::size_t>(phrases->size()));
+
+    for (const auto& phraseValue : *phrases)
+    {
+        const auto* phraseObject = phraseValue.getDynamicObject();
+        if (phraseObject == nullptr)
+            continue;
+
+        const auto beatIndex = readDoubleProperty(phraseObject, "beat_index");
+        const auto beatCount = readDoubleProperty(phraseObject, "beat_count");
+        if (beatCount <= 0.0)
+            continue;
+
+        model::PhraseBlock block;
+        block.type = readPhraseType(readStringProperty(phraseObject, "type"));
+        block.startBar = static_cast<int>(std::round(beatIndex / static_cast<double>(beatsPerBar)));
+        block.lengthBars = std::max(1, static_cast<int>(std::round(beatCount / static_cast<double>(beatsPerBar))));
+        block.energy = static_cast<float>(std::clamp(readDoubleProperty(phraseObject, "energy"), 0.0, 1.0));
+        block.hasDrums = readBoolProperty(phraseObject, "has_drums");
+        block.hasBass = readBoolProperty(phraseObject, "has_bass");
+        block.hasVocal = readBoolProperty(phraseObject, "has_vocal");
+        block.hasMelody = readBoolProperty(phraseObject, "has_melody");
+
+        phraseBlocks.push_back(block);
+    }
+
+    return phraseBlocks;
 }
 
 juce::File pickPrimaryAudioFile(const juce::File& directory, const std::set<juce::String>& knownStemFileNames)
@@ -241,6 +313,7 @@ std::optional<TrackBundle> loadTrackBundleFromMixdeskJson(const juce::File& meta
     const auto duration = readDoubleProperty(root, "duration");
     const auto metadataBpm = readDoubleProperty(root, "bpm");
     auto metadataBeatGrid = readBeatGrid(root);
+    auto metadataPhraseBlocks = readPhraseBlocks(root, metadataBeatGrid);
     const auto drumKey = readStringProperty(drumObject, "key");
 
     model::LoadedTrack loadedTrack;
@@ -276,7 +349,8 @@ std::optional<TrackBundle> loadTrackBundleFromMixdeskJson(const juce::File& meta
         noDrumStemFile,
         noVocalsStemFile,
         metadataBpm,
-        std::move(metadataBeatGrid) };
+        std::move(metadataBeatGrid),
+        std::move(metadataPhraseBlocks) };
 }
 
 std::optional<juce::File> findFirstMixdeskJson(const juce::File& rootDirectory)

@@ -23,6 +23,7 @@ struct TrackBundle
     juce::File noVocalsStemFile;
     double metadataBpm {};
     std::optional<model::BeatGrid> metadataBeatGrid;
+    std::vector<model::PhraseBlock> metadataPhraseBlocks;
 };
 
 struct TrackCatalogEntry

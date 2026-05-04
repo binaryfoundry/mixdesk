@@ -1,6 +1,5 @@
 #include "MainComponent.h"
 
-#include "Engine/PhraseAnalyzer.h"
 #include "Engine/StemPreparation.h"
 #include "Engine/WaveformAnalyzer.h"
 #include "Model/DemoState.h"
@@ -240,8 +239,7 @@ std::shared_ptr<TrackLoadResult> loadTrackForDeck(int requestId,
     }
     recordStage("waveforms");
 
-    engine::PhraseAnalyzer phraseAnalyzer;
-    result->phraseBlocks = phraseAnalyzer.analyze(result->beatGrid, result->stemWaveforms, 8);
+    result->phraseBlocks = bundle->metadataPhraseBlocks;
     recordStage("phrases");
     result->preparedStems = std::move(preparedStemSet.stems);
     result->message = preparedStemSet.message;

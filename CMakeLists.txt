@@ -60,8 +60,6 @@ target_sources(MixdeskPhraseWorkspace
         Source/App/MainComponent.h
         Source/Engine/DeckPlaybackEngine.cpp
         Source/Engine/DeckPlaybackEngine.h
-        Source/Engine/PhraseAnalyzer.cpp
-        Source/Engine/PhraseAnalyzer.h
         Source/Engine/StemPreparation.cpp
         Source/Engine/StemPreparation.h
         Source/Engine/TrackLoader.cpp
@@ -109,8 +107,6 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}/Source" PREFIX "Source" FILES
     Source/App/MainComponent.h
     Source/Engine/DeckPlaybackEngine.cpp
     Source/Engine/DeckPlaybackEngine.h
-    Source/Engine/PhraseAnalyzer.cpp
-    Source/Engine/PhraseAnalyzer.h
     Source/Engine/StemPreparation.cpp
     Source/Engine/StemPreparation.h
     Source/Engine/TrackLoader.cpp

@@ -9,6 +9,7 @@ This is a small JUCE/C++20 prototype for a touch-first 3-deck DJ phrase alignmen
 - Bar/phrase snapping structure for dragging phrase blocks horizontally.
 - Track selection scans the configured tracks root for `mixdesk.json` files, defaulting to `D:\tracks`.
 - Beat grids are read from each track's `mixdesk.json`, then beat markers are drawn on the loaded deck lane.
+- Phrase blocks are read from each track's `mixdesk.json` as beat-indexed sections generated offline by the Python tool.
 - Drum, bass, music, and vocal stems are decoded once at load time into compact peak waveforms and rendered in layered colours.
 - Stem preprocessing reconciles direct LALALAI stems with `no_bass`, `no_drum`, and `no_vocals` complements so playback exposes clean Drums, Bass, Music, and Vocals.
 - The top bar provides one global play/pause control, a master volume slider, and a global BPM slider.
@@ -41,7 +42,7 @@ On Windows/MSVC, `MIXDESK_STATIC_RUNTIME` is enabled by default to avoid dependi
 
 - `Source/Model`: deck, role, phrase, timeline, workspace state, and demo state creation.
 - `Source/UI/PhraseWorkspace.*`: custom JUCE component, rendering, hit testing, drag snapping, zoom scaffolding, and conflict display.
-- `Source/Engine/TrackLoader.*`: reads `mixdesk.json`, finds the primary track and stems, and loads precomputed beat grids.
+- `Source/Engine/TrackLoader.*`: reads `mixdesk.json`, finds the primary track and stems, and loads precomputed beat grids and phrase blocks.
 - `Source/Engine/StemPreparation.*`: offline stem decoding, alignment, complement-stem reconciliation, `MusicResidual` derivation, reconstruction validation metrics, and public stem mix helpers.
 - `Source/Engine/WaveformAnalyzer.*`: builds downsampled stem peak envelopes for timeline rendering.
 - `Source/Engine/DeckPlaybackEngine.*`: reusable per-deck playback source, including prepared-stem playback, grid-positioned transport, master volume, and Signalsmith Stretch pitch-locked BPM changes.
@@ -64,7 +65,7 @@ Default contents:
 tracksRoot=D:\tracks
 ```
 
-Track loading, stem preparation, waveform analysis, and phrase analysis run on a background thread. Beat detection is handled by `Tools/generate_mixdesk.py` when preparing `mixdesk.json`, so loading the same track does not recalculate beats every time. The UI thread receives only the prepared result, so opening a track picker or loading a new deck should not block the interface or do heavy work in the audio callback.
+Track loading, stem preparation, and waveform analysis run on a background thread. Beat detection and naive phrase generation are handled by `Tools/generate_mixdesk.py` when preparing `mixdesk.json`. The UI thread receives only the prepared result, so opening a track picker or loading a new deck should not block the interface or do heavy work in the audio callback.
 
 ## Stem Reconciliation Design
 
@@ -121,7 +122,7 @@ ctest --test-dir build -C Release --output-on-failure
 
 - TODO(real audio engine): introduce an engine/control thread boundary and a lock-free command queue.
 - TODO(waveform rendering): add waveform lanes behind phrase blocks.
-- TODO(beatgrid/phrase analysis): load analyzed tracks and generate phrase blocks from metadata.
+- TODO(metadata cache): persist prepared stem and waveform artifacts beside analyzed track metadata.
 - TODO(MIDI/HID controller support): map external controls to launch, role, and snap actions.
 - TODO(multi-touch pinch zoom): complete two-finger zoom/pan handling against target hardware.
 - TODO(GPU rendering path): move dense timeline rendering to an accelerated path when visual density increases.

@@ -30,3 +30,8 @@ desktop.ini
 *.log
 *.tmp
 *.temp
+
+# Local secrets
+.env
+.env.local
+Tools/openai_key.txt

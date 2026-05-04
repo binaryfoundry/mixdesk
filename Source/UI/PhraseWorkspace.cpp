@@ -251,7 +251,7 @@ void PhraseWorkspace::paint(juce::Graphics& g)
     drawLanes(g);
     drawLoadedTrackBeds(g);
     drawPhraseBlocks(g);
-    drawPhraseMarkers(g);
+    drawPhraseBoundaries(g);
     drawBeatMarkers(g);
     drawPendingTrackLoadMarker(g);
     drawPlayhead(g);
@@ -1329,7 +1329,7 @@ void PhraseWorkspace::drawBeatMarkers(juce::Graphics& g)
     g.restoreState();
 }
 
-void PhraseWorkspace::drawPhraseMarkers(juce::Graphics& g)
+void PhraseWorkspace::drawPhraseBoundaries(juce::Graphics& g)
 {
     const auto grid = getGridBounds();
     g.saveState();

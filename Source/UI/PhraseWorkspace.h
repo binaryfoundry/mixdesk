@@ -178,7 +178,7 @@ private:
     void drawLoadedTrackBeds(juce::Graphics& g);
     void drawStemWaveforms(juce::Graphics& g, const model::DeckTimeline& deck, juce::Rectangle<float> bed);
     void drawBeatMarkers(juce::Graphics& g);
-    void drawPhraseMarkers(juce::Graphics& g);
+    void drawPhraseBoundaries(juce::Graphics& g);
     void drawPhraseBlocks(juce::Graphics& g);
     void drawPendingTrackLoadMarker(juce::Graphics& g);
     void drawPlayhead(juce::Graphics& g);

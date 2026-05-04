@@ -4,7 +4,7 @@ namespace mixdesk::model
 {
 WorkspaceState createDemoWorkspaceState()
 {
-    // TODO(beatgrid/phrase analysis): replace this handcrafted state with analyzed track metadata.
+    // TODO(metadata cache): replace this handcrafted state with analyzed track metadata.
     WorkspaceState state;
     state.bpm = 126.0;
     state.barsPerPhrase = 8;
