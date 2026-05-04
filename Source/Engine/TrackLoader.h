@@ -22,6 +22,7 @@ struct TrackBundle
     juce::File noDrumStemFile;
     juce::File noVocalsStemFile;
     double metadataBpm {};
+    std::optional<model::BeatGrid> metadataBeatGrid;
 };
 
 struct TrackCatalogEntry

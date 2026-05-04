@@ -58,8 +58,6 @@ target_sources(MixdeskPhraseWorkspace
         Source/App/AppSettings.h
         Source/App/MainComponent.cpp
         Source/App/MainComponent.h
-        Source/Engine/BeatDetector.cpp
-        Source/Engine/BeatDetector.h
         Source/Engine/DeckPlaybackEngine.cpp
         Source/Engine/DeckPlaybackEngine.h
         Source/Engine/PhraseAnalyzer.cpp
@@ -109,8 +107,6 @@ source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}/Source" PREFIX "Source" FILES
     Source/App/AppSettings.h
     Source/App/MainComponent.cpp
     Source/App/MainComponent.h
-    Source/Engine/BeatDetector.cpp
-    Source/Engine/BeatDetector.h
     Source/Engine/DeckPlaybackEngine.cpp
     Source/Engine/DeckPlaybackEngine.h
     Source/Engine/PhraseAnalyzer.cpp

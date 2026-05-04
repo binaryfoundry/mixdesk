@@ -6,7 +6,7 @@ Utilities for preparing local track folders for the Mixdesk prototype.
 
 Generates `mixdesk.json` metadata files for folders that contain source-separated stems.
 
-The script scans a root directory recursively, finds audio files, classifies stems from filename tokens, reads metadata with `ffprobe`, and writes one `mixdesk.json` beside each detected stem set.
+The script scans a root directory recursively, finds audio files, classifies stems from filename tokens, reads metadata with `ffprobe`, analyzes the drum stem with `ffmpeg`, and writes one `mixdesk.json` beside each detected stem set. Beat grids are stored in the JSON so the app can load them without recalculating beats on every track load.
 
 Recognized stems:
 
@@ -23,11 +23,12 @@ Supported audio extensions include WAV, AIFF, FLAC, MP3, M4A, AAC, OGG, OPUS, WM
 ## Requirements
 
 - Python 3.10 or newer
-- FFmpeg available on `PATH`, specifically `ffprobe`
+- FFmpeg available on `PATH`, specifically `ffmpeg` and `ffprobe`
 
-Check `ffprobe`:
+Check FFmpeg:
 
 ```powershell
+ffmpeg -version
 ffprobe -version
 ```
 
@@ -53,4 +54,4 @@ python C:\Users\paula\Documents\Projects\mixdesk\Tools\generate_mixdesk.py .
 
 ## Notes
 
-The app currently uses `mixdesk.json` to locate the original track file plus direct drum/bass/vocal stems and the LALALAI complement stems. The C++ app decodes them to non-normalized floating-point PCM, derives complement candidates, and exposes only Drums, Bass, Vocals, and Music for playback.
+The app currently uses `mixdesk.json` to locate the original track file plus direct drum/bass/vocal stems, LALALAI complement stems, and a precomputed `beat_grid`. The C++ app decodes stems to non-normalized floating-point PCM, derives complement candidates, and exposes only Drums, Bass, Vocals, and Music for playback.

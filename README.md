@@ -8,7 +8,7 @@ This is a small JUCE/C++20 prototype for a touch-first 3-deck DJ phrase alignmen
 - Starts with empty deck lanes; double-tap a lane to choose a track and place it at that bar.
 - Bar/phrase snapping structure for dragging phrase blocks horizontally.
 - Track selection scans the configured tracks root for `mixdesk.json` files, defaulting to `D:\tracks`.
-- The drum stem is low-pass filtered and analyzed for a beat grid, then beat markers are drawn on the loaded deck lane.
+- Beat grids are read from each track's `mixdesk.json`, then beat markers are drawn on the loaded deck lane.
 - Drum, bass, music, and vocal stems are decoded once at load time into compact peak waveforms and rendered in layered colours.
 - Stem preprocessing reconciles direct LALALAI stems with `no_bass`, `no_drum`, and `no_vocals` complements so playback exposes clean Drums, Bass, Music, and Vocals.
 - The top bar provides one global play/pause control, a master volume slider, and a global BPM slider.
@@ -41,8 +41,7 @@ On Windows/MSVC, `MIXDESK_STATIC_RUNTIME` is enabled by default to avoid dependi
 
 - `Source/Model`: deck, role, phrase, timeline, workspace state, and demo state creation.
 - `Source/UI/PhraseWorkspace.*`: custom JUCE component, rendering, hit testing, drag snapping, zoom scaffolding, and conflict display.
-- `Source/Engine/TrackLoader.*`: reads `mixdesk.json`, finds the primary track and drum stem.
-- `Source/Engine/BeatDetector.*`: C++ translation of the `web-audio-beat-detector` worker algorithm: 240 Hz low-pass render, threshold peak detection, nearby peak interval counting, and tempo bucket scoring.
+- `Source/Engine/TrackLoader.*`: reads `mixdesk.json`, finds the primary track and stems, and loads precomputed beat grids.
 - `Source/Engine/StemPreparation.*`: offline stem decoding, alignment, complement-stem reconciliation, `MusicResidual` derivation, reconstruction validation metrics, and public stem mix helpers.
 - `Source/Engine/WaveformAnalyzer.*`: builds downsampled stem peak envelopes for timeline rendering.
 - `Source/Engine/DeckPlaybackEngine.*`: reusable per-deck playback source, including prepared-stem playback, grid-positioned transport, master volume, and Signalsmith Stretch pitch-locked BPM changes.
@@ -65,7 +64,7 @@ Default contents:
 tracksRoot=D:\tracks
 ```
 
-Track loading, stem preparation, waveform analysis, beat detection, and phrase analysis run on a background thread. The UI thread receives only the prepared result, so opening a track picker or loading a new deck should not block the interface or do heavy work in the audio callback.
+Track loading, stem preparation, waveform analysis, and phrase analysis run on a background thread. Beat detection is handled by `Tools/generate_mixdesk.py` when preparing `mixdesk.json`, so loading the same track does not recalculate beats every time. The UI thread receives only the prepared result, so opening a track picker or loading a new deck should not block the interface or do heavy work in the audio callback.
 
 ## Stem Reconciliation Design
 

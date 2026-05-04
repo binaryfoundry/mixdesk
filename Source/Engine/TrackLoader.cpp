@@ -82,6 +82,48 @@ double readDoubleProperty(const juce::DynamicObject* object, const juce::Identif
     return value.isDouble() || value.isInt() ? static_cast<double>(value) : 0.0;
 }
 
+std::optional<model::BeatGrid> readBeatGrid(const juce::DynamicObject* root)
+{
+    if (root == nullptr)
+        return std::nullopt;
+
+    const auto beatGridValue = root->getProperty("beat_grid");
+    const auto* beatGridObject = beatGridValue.getDynamicObject();
+    if (beatGridObject == nullptr)
+        return std::nullopt;
+
+    model::BeatGrid beatGrid;
+    beatGrid.tempo = readDoubleProperty(beatGridObject, "tempo");
+    beatGrid.bpm = static_cast<int>(std::round(readDoubleProperty(beatGridObject, "bpm")));
+    beatGrid.firstBeatOffsetSeconds = readDoubleProperty(beatGridObject, "first_beat_offset_seconds");
+    beatGrid.secondsPerBeat = readDoubleProperty(beatGridObject, "seconds_per_beat");
+    beatGrid.beatsPerBar = std::max(1, static_cast<int>(std::round(readDoubleProperty(beatGridObject, "beats_per_bar"))));
+    beatGrid.durationSeconds = readDoubleProperty(beatGridObject, "duration_seconds");
+
+    const auto beatTimesValue = beatGridObject->getProperty("beat_times_seconds");
+    if (auto* beatTimes = beatTimesValue.getArray())
+    {
+        beatGrid.beatTimesSeconds.reserve(static_cast<std::size_t>(beatTimes->size()));
+        for (const auto& beatTime : *beatTimes)
+            if (beatTime.isDouble() || beatTime.isInt())
+                beatGrid.beatTimesSeconds.push_back(static_cast<double>(beatTime));
+    }
+
+    if (beatGrid.tempo <= 0.0 && beatGrid.bpm > 0)
+        beatGrid.tempo = static_cast<double>(beatGrid.bpm);
+
+    if (beatGrid.secondsPerBeat <= 0.0 && beatGrid.tempo > 0.0)
+        beatGrid.secondsPerBeat = 60.0 / beatGrid.tempo;
+
+    if (beatGrid.bpm <= 0 && beatGrid.tempo > 0.0)
+        beatGrid.bpm = static_cast<int>(std::round(beatGrid.tempo));
+
+    if (beatGrid.tempo <= 0.0 || beatGrid.secondsPerBeat <= 0.0)
+        return std::nullopt;
+
+    return beatGrid;
+}
+
 juce::File pickPrimaryAudioFile(const juce::File& directory, const std::set<juce::String>& knownStemFileNames)
 {
     for (const auto& file : directory.findChildFiles(juce::File::findFiles, false, "*"))
@@ -198,6 +240,7 @@ std::optional<TrackBundle> loadTrackBundleFromMixdeskJson(const juce::File& meta
     const auto trackName = readStringProperty(root, "track_name");
     const auto duration = readDoubleProperty(root, "duration");
     const auto metadataBpm = readDoubleProperty(root, "bpm");
+    auto metadataBeatGrid = readBeatGrid(root);
     const auto drumKey = readStringProperty(drumObject, "key");
 
     model::LoadedTrack loadedTrack;
@@ -232,7 +275,8 @@ std::optional<TrackBundle> loadTrackBundleFromMixdeskJson(const juce::File& meta
         noBassStemFile,
         noDrumStemFile,
         noVocalsStemFile,
-        metadataBpm };
+        metadataBpm,
+        std::move(metadataBeatGrid) };
 }
 
 std::optional<juce::File> findFirstMixdeskJson(const juce::File& rootDirectory)

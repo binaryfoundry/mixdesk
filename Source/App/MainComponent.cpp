@@ -1,6 +1,5 @@
 #include "MainComponent.h"
 
-#include "Engine/BeatDetector.h"
 #include "Engine/PhraseAnalyzer.h"
 #include "Engine/StemPreparation.h"
 #include "Engine/WaveformAnalyzer.h"
@@ -169,34 +168,27 @@ std::shared_ptr<TrackLoadResult> loadTrackForDeck(int requestId,
     }
     recordStage("stem decode/preparation");
 
-    engine::BeatDetector beatDetector;
-    const auto canAnalyzePreparedDrums = preparedStemSet.succeeded && preparedStemSet.stems.drums.hasAudio();
-    auto beatAnalysisSource = canAnalyzePreparedDrums ? juce::String("aligned playback drums") : juce::String("drum source file");
-    auto analysis = canAnalyzePreparedDrums
-        ? beatDetector.analyzeBuffer(preparedStemSet.stems.drums.audio,
-            preparedStemSet.stems.drums.sampleRate,
-            {},
-            engine::preparedStemSetDurationSeconds(preparedStemSet.stems))
-        : beatDetector.analyzeDrumStem(bundle->drumStemFile);
-    if (! analysis.succeeded)
+    auto beatAnalysisSource = juce::String("mixdesk.json beat_grid");
+    model::BeatGrid beatGrid;
+    if (bundle->metadataBeatGrid.has_value())
     {
-        if (bundle->metadataBpm > 0.0)
-        {
-            analysis.beatGrid.bpm = static_cast<int>(std::round(bundle->metadataBpm));
-            analysis.beatGrid.tempo = bundle->metadataBpm;
-            analysis.beatGrid.secondsPerBeat = 60.0 / bundle->metadataBpm;
-            analysis.beatGrid.beatsPerBar = 4;
-            analysis.beatGrid.durationSeconds = bundle->loadedTrack.durationSeconds;
-            analysis.beatGrid.beatTimesSeconds = makeFallbackBeatTimes(analysis.beatGrid.durationSeconds, analysis.beatGrid.secondsPerBeat);
-            analysis.succeeded = true;
-            beatAnalysisSource = "track metadata fallback";
-        }
-        else
-        {
-            result->message = "Beat analysis failed for " + juce::String(bundle->loadedTrack.name)
-                + ": " + analysis.message;
-            return result;
-        }
+        beatGrid = *bundle->metadataBeatGrid;
+    }
+    else if (bundle->metadataBpm > 0.0)
+    {
+        beatGrid.bpm = static_cast<int>(std::round(bundle->metadataBpm));
+        beatGrid.tempo = bundle->metadataBpm;
+        beatGrid.secondsPerBeat = 60.0 / bundle->metadataBpm;
+        beatGrid.beatsPerBar = 4;
+        beatGrid.durationSeconds = bundle->loadedTrack.durationSeconds;
+        beatGrid.beatTimesSeconds = makeFallbackBeatTimes(beatGrid.durationSeconds, beatGrid.secondsPerBeat);
+        beatAnalysisSource = "track metadata BPM fallback";
+    }
+    else
+    {
+        result->message = "No beat_grid or BPM metadata found for " + juce::String(bundle->loadedTrack.name)
+            + ". Run Tools\\generate_mixdesk.py for this track folder.";
+        return result;
     }
     recordStage("beat grid");
 
@@ -221,13 +213,13 @@ std::shared_ptr<TrackLoadResult> loadTrackForDeck(int requestId,
     {
         result->track.durationSeconds = result->hasPreparedAudio
             ? engine::preparedStemSetDurationSeconds(preparedStemSet.stems)
-            : analysis.beatGrid.durationSeconds;
+            : beatGrid.durationSeconds;
     }
 
-    analysis.beatGrid.durationSeconds = result->track.durationSeconds > 0.0
+    beatGrid.durationSeconds = result->track.durationSeconds > 0.0
         ? result->track.durationSeconds
-        : analysis.beatGrid.durationSeconds;
-    result->beatGrid = analysis.beatGrid;
+        : beatGrid.durationSeconds;
+    result->beatGrid = beatGrid;
 
     engine::WaveformAnalyzer waveformAnalyzer;
     result->stemWaveforms.reserve(4);
